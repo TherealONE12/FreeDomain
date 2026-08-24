@@ -66,10 +66,16 @@ def VerifyUser(password: str, ip_addr: str) -> bool:
         conn.commit()
         if row is none:
             return -1
-        else if row['ip_address']
+        elif row['ip_address'] is not ip_addr:
+            return -1
+        elif row['is_restricted'] is '1':
+            return -1
+        else:
+            return row[id]
 
 
-
+def VerifyOtpByUserId():
+    
 
 
 @app.route('/')
@@ -86,8 +92,20 @@ def ping():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        name = request.form['auth_code']
-        return f"Hello {name}, POST request received"
+        password = request.form['auth_code']
+        ip_addr = request.remote_addr
+        if VerifyUser(password=password, ip_addr=ip_addr) is not '-1':
+            resp = make_response(render_template('otp_input'))
+            resp.set_cookie(
+                'pw', password,
+                httponly=True,
+                secure=True,
+                samesite='Lax',
+                max_age=60*30     # 30 minutes
+            )
+            return resp
+        else:
+            return render_template('')
     return render_template('login.html')
 
 
@@ -99,6 +117,19 @@ def register():
         return f"Request Accepted. Your new Login Data is {MakeNewUser(ip_addr)}"
     return render_template('register.html')
 
+
+@app.route('/otp_input.html')
+@app.route('/otp_input', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        otp = request.form['otp']
+        ip_addr = request.remote_addr
+        password = request.cookies.get['pw']
+        if VerifyUser(password=password, ip_addr=ip_addr) is not '-1':
+            if 
+        else:
+            return render_template('')
+    return render_template('otp_input.html')
 
 
 
