@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users(
     hash_secret    TEXT NOT NULL,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_restricted   INTEGER NOT NULL DEFAULT 0,
-    ip_address TEXT NOT NULL
+    ip_address TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS user_2fa(
@@ -59,8 +59,14 @@ def MakeNewUser(ipadress: str) -> str:
         conn.commit()
     return password
 
-
-
+def VerifyUser(password: str, ip_addr: str) -> bool:
+    hash_pw = hashlib.sha256(password.encode()).hexdigest()
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE hash_secrets = ?)", (hash_pw,)).fetchone
+        conn.commit()
+        if row is none:
+            return -1
+        else if row['ip_address']
 
 
 
