@@ -113,18 +113,34 @@ def VerifyUser(password: str, ip_addr: str) -> bool:
             return row['id']
 
 
-def VerifyOtpByUserId():
-    return -1
+
+
+
+def verify():
+    session = request.cookies.get['session']
+    id = -1
+    age = -1
+    restricted = -1
+    with get_conn() as conn:
+        coll = conn.execute("SELECT * FROM session WHERE session_key = (?)", (session,)).fetchone()
+        id = coll['id']
+        age = coll['updated_at']
+
+        restricted = conn.execute("SELECT is_restricted FROM users WHERE id = (?)", (id,)).fetchone()
+
+    if id == -1 or age == -1 or time.now() - age >= 60*30 or restricted  == 1:
+        return -1
+    else:
+        return 1
+
+
+
+
 
 
 @app.route('/')
 def ping():
     return 'Pong!'
-
-
-
-
-
 
 
 @app.route('/login.html')
@@ -205,7 +221,7 @@ def otp_verify_afther_creation():
             key = "-1"
 
             with get_conn() as conn:
-                key = conn.execute("SELECT * FROM user_2fa WHERE id = ?)", (VerifyUser(password=password, ip_addr=ip_addr),)).fetchone()
+                key = conn.execute("SELECT * FROM user_2fa WHERE id = (?)", (VerifyUser(password=password, ip_addr=ip_addr),)).fetchone()
 
             totp_verify = pyotp.TOTP(key)
             
@@ -215,6 +231,10 @@ def otp_verify_afther_creation():
             return render_template('failure.html')
     return render_template('verify_otp.html')
 
+@app.route('/homepage')
+@app.route('homepage.html', methods=['GET', 'POST'])
+def homepage():
+    pass
 
 if __name__ == '__main__':
     init_db()
