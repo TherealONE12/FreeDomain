@@ -7,8 +7,16 @@ import hashlib
 import qrcode
 import time
 import os
+from namecheap import Namecheap
 
 
+nc = Namecheap()
+
+domains = nc.domains.check("freedomain.meme")
+
+for domain in domains:
+    if domain.available:
+        print(f"Domain {domain.domain} is available!")
 
 app = Flask(__name__)
 
@@ -32,14 +40,14 @@ CREATE TABLE IF NOT EXISTS user_2fa(
 
 CREATE TABLE IF NOT EXISTS subdomains(
     id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    subdomain   TEXT UNIQUE,
+    subdomain   TEXT DEFAULT -1,
     updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS session(
     id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     session_key    TEXT NOT NULL,
-    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at     TIMESTAMP
 );
 """
 
@@ -87,7 +95,7 @@ def MakeNewUser(ipadress: str) -> str:
             conn.commit()
         return password
     except sqlite3.Error as e:
-        if e is "UNIQUE constraint failed: users.ip_address":
+        if "UNIQUE constraint failed" in str(e):
             return -1
         else:
             return -2
@@ -111,31 +119,63 @@ def VerifyUser(password: str, ip_addr: str) -> bool:
 
 
 
-def verify():
-    session = request.cookies.get('session')
-    id = -1
+def verify(id: int, session: str):
     age = -1
     restricted = -1
     with get_conn() as conn:
-        coll = conn.execute("SELECT * FROM session WHERE session_key = ?", (session,)).fetchone()
-        id = coll['id']
+        coll = conn.execute("SELECT * FROM session WHERE id = ?", (id,)).fetchone()
         age = coll['updated_at']
 
         restricted = conn.execute("SELECT is_restricted FROM users WHERE id = ?", (id,)).fetchone()
 
-    if id == -1 or age == -1 or time.time() - age >= 60*30 or restricted  == 1: # time not working, :((((
+    if id == -1 or age == -1 or time.time() - age >= 60*30 or restricted  == 1:
         return -1
     else:
         return 1
 
 
 
+def make_domain(id: int, subdomainname: str, ip: int):
+    ok = verify(id)
+
+    if ok == 1:
+        with get_conn() as conn:
+            subdomain_state = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (id,)).fetchone()
+            
+            subdomain_other = conn.execute("SELECT subdomain FROM subdomains WHERE id != ?", (id,)).fetchall()
+            append = 0
+            curcnt = 0
+            for row in subdomain_other:
+                for row in subdomain_other:
+                    if row['subdomain'] == subdomainname or row['subdomain'] == f"{curcnt}.{subdomainname}":
+                        append +=1
+                curcnt += 1
+
+            if append == 0:
+                if subdomain_state is None or subdomain_state['subdomain'] == -1:
+                    nc.dns.add("freedomain.meme",
+                    nc.dns.builder()
+                    .a(subdomainname, ip, 1799))
+                    return 1
+                else:
+                    return -1
+            else:
+                newdomain = f"{append}.{subdomainname}"
+                if subdomain_state is None or subdomain_state['subdomain'] == -1:
+                    nc.dns.add("freedomain.meme",
+                    nc.dns.builder()
+                    .a(newdomain, ip, 1799))
+                    return 2
+                else:
+                    return -1
+            
+
 
 
 
 @app.route('/')
 def ping():
-    return 'Pong!'
+    return render_template('homepage.html')
 
 
 @app.route('/login.html')
@@ -145,7 +185,7 @@ def login():
         password = request.form['auth_code']
         ip_addr = request.remote_addr
         if VerifyUser(password=password, ip_addr=ip_addr) != -1:
-            resp = make_response(render_template('otp_input'))
+            resp = make_response(render_template('otp_input.html'))
             resp.set_cookie(
                 'pw', password,
                 httponly=True,
@@ -173,19 +213,19 @@ def register():
             return "An Error occured. Try again or contact support."
         else:
             if VerifyUser(password=pw, ip_addr=ip_addr) != -1: # Still a bug idk pleaseee why is it not hashing my stuff AHHHH
-                resp = f"""
+                resp = make_response(f"""
 <!DOCTYPE html>
 <html>
     <body>
         <h3>Request Accepted. Your new Login Data is {pw}</h3>
-        <form method="get" action="/verify_otp">
-            <input type="button" value="continue">
+        <form method="get" action="/verify_otp.html">
+            <input type="submit" value="continue">
         </form>
     </body>
 </html>
-"""
+""")
                 resp.set_cookie(
-                    'pw', password,
+                    'pw', pw,
                     httponly=True,
                     secure=True,
                     samesite='Lax',
@@ -255,10 +295,27 @@ def otp_verify_afther_creation():
     
 """
 
+@app.route('/make_domain')
+@app.route('/make_domain.html', methods=['GET', 'POST'])
+def homepage():
+    session = request.cookies.get('session')
+    if verify(VerifyUser(request.cookies.get('pw'), request.remote_addr), request.remote_addr) == 1:
+        if request.method == 'POST':
+            domainname = request.form('domainname')
+            ip_link = request.form('ip')
+            if make_domain(VerifyUser(request.cookies.get('pw'), request.remote_addr), domainname, ip_link) == -1:
+                return render_template('failure.html')
+            else:
+                return render_template('sucsess.html')
+            return render_template('failure.html')
+        return render_template('make_domain.html')
+    return render_template('failure.html')
+
+
 @app.route('/homepage')
 @app.route('/homepage.html', methods=['GET', 'POST'])
 def homepage():
-    pass
+    return render_template("home_loggedin.html")
 
 if __name__ == '__main__':
     init_db()
