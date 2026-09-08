@@ -8,7 +8,10 @@ import qrcode
 import time
 import os
 from namecheap import Namecheap
+from dotenv import load_dotenv;
 
+
+load_dotenv()
 
 nc = Namecheap()
 
@@ -212,7 +215,7 @@ def register():
         elif pw == -2:
             return "An Error occured. Try again or contact support."
         else:
-            if VerifyUser(password=pw, ip_addr=ip_addr) != -1: # Still a bug idk pleaseee why is it not hashing my stuff AHHHH
+            if VerifyUser(password=pw, ip_addr=ip_addr) != -1: 
                 resp = make_response(f"""
 <!DOCTYPE html>
 <html>
@@ -289,7 +292,7 @@ def otp_verify_afther_creation():
         <br><br>
         <img src="/static/qr/{userid}/qr_auth.png" alt="Your otp password">
         <br><br>
-        <a href="login.html"> Continue to Verify OTP</a>
+        <a href="otp_input.html"> Continue to Verify OTP</a>
     </body>
 </html>
     
@@ -314,7 +317,7 @@ def homepage():
 
 @app.route('/homepage')
 @app.route('/homepage.html', methods=['GET', 'POST'])
-def homepage():
+def homepagev2():
     return render_template("home_loggedin.html")
 
 if __name__ == '__main__':
