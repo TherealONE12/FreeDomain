@@ -2,19 +2,19 @@
 <html>
     <body>
         <h3>Press the button to get an Auth Code!</h3>
-        {% IF error == -2 %}
+        {% if error == -2 %}
             <br><br>
             <h3>Sorry, But an Internal Error Happend. We are working hard at fixxing it, but you can Help! Please</h3>
             <a href="https://github.com/TherealONE12/FreeDomain">Report the Bug!</a>
             <br><br>
-        {% ENDIF %}
-        {% IF error == -1 %}
+        {% endif %}
+        {% if error == -1 %}
             <br><br>
             <h3>Whoops! Someone has Already registerd from this IP adress.</h3>
             <a href="/login.html">Why Dont You Login?</a>
             <h4>If this wasn't You, please use an VPN or smth. Note that you need the same IP to Login again!</h4>
             <br><br>
-        {% ENDIF %}
+        {% endif %}
         <form method="post">
             <input type="submit" value="Register now!">
         </form>
