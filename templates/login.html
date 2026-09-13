@@ -5,6 +5,12 @@
         <br>
         <h5>AKA Your "Password"</h5>
         <br>
+
+        {% IF error %}
+            <h5>Sorry, But your Password/Ip doesnt Match...</h5>
+        {% ENDIF %}
+
+        <br>
         <form method="post" action="/login">
             <input type="password" name="auth_code" required>
             <br><br>

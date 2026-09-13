@@ -15,7 +15,7 @@ import time
 import os
 import threading
 import asyncio
-
+import traceback
 
 # Setup stuff
 load_dotenv()
@@ -151,7 +151,7 @@ def send_newDomain(domainname: str):
     coro =  channel.send(embed=embed1)
     asyncio.run_coroutine_threadsafe(coro, bot.loop)
 
-def send_ban(userid: int, domainname: str, ip:str):
+def send_ban(userid: int, domainname: str, ip:str, reason:str):
     channel = bot.get_channel(1548007980740382741)
 
     if channel is None:
@@ -160,7 +160,7 @@ def send_ban(userid: int, domainname: str, ip:str):
     
     embed1 = discord.Embed(
       title= "Banned",
-      description= f"Banned UserId {userid} with old domainname {domainname} and redirect-ip of {ip}",
+      description= f"Banned UserId {userid} with old domainname {domainname} and redirect-ip of {ip}. Reason: {reason}",
       color= 15469837,
     )
 
@@ -183,8 +183,7 @@ def send_ban(userid: int, domainname: str, ip:str):
 def get_conn() -> sqlite3.Connection: # gets an databank connection going 
     conn = sqlite3.connect(DB_PATH)   
     conn.execute("PRAGMA foreign_keys = ON")   # Testing queries for errors, I belive
-    conn.row_factory = sqlite3.Row      # Allows for row-specific acsesss  
-    send_log("Starts an DB Connection!", 4)     
+    conn.row_factory = sqlite3.Row      # Allows for row-specific acsesss       
     return conn
 
 
@@ -285,9 +284,9 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
         result = predict_prob(subdomainname.splitlines()) # tries to predict if the subdomainname is a bad word
         if result[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
             with get_conn() as conn:
-                conn.execute("INSERT INTO users (id, is_restricted) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET is_restricted = excluded.is_restricted",(id, 1))
+                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
                 conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
-                send_ban(id, subdomainname, ip)
+                send_ban(id, subdomainname, ip, "Banned by Auto-Subdomain-Badword Filter.")
                 return -1 
 
     ok = verify(id, session) # verifying the session again if the restricted value updated
@@ -334,7 +333,16 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                 return append # different return to let the user know
             else:
                 return -1
-            
+
+
+def removeDomainUser(userid:int):
+    with get_conn() as conn:
+        conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid))
+        conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
+        conn.commit() 
+    send_log(f"User {userid} removed His Subdomain!", 4)
+
+
 # All discord routes are below
 
 @bot.event
@@ -346,11 +354,117 @@ async def test(ctx, arg):
     await ctx.send(f"You said $test {arg}!")
 
 
+@bot.command()
+async def ban(ctx, userid, reason):
+    author = ctx.message.author
+    msgid = int(author.id)
+
+    if msgid == 918216902885670982:
+        with get_conn() as conn:
+                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, userid))
+                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
+                send_ban(userid, "Unknown", "Unknown", reason)
+        await ctx.send(f"Banned {userid} with Reason {reason}!")
+    else:
+        send_log(f"Discord User with ID = {msgid} wanted to ban website User {userid} with reason {reason}.", 1)
+        await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
+
+@bot.command()
+async def unbanKeepDomain(ctx, userid, reason):
+    author = ctx.message.author
+    msgid = int(author.id)
+
+    if msgid == 918216902885670982:
+        with get_conn() as conn:
+                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (0, userid))
+                conn.commit() 
+                send_ban(userid, "Unknown", "Unknown", reason)
+        await ctx.send(f"Unbanned {userid} with Reason {reason}!")
+    else:
+        send_log(f"Discord User with ID = {msgid} wanted to ban website User {userid} with reason {reason}.", 1)
+        await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
+
+@bot.command()
+async def whipe(ctx, userid, reason):
+    author = ctx.message.author
+    msgid = int(author.id)
+
+    if msgid == 918216902885670982:
+        with get_conn() as conn:
+                conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid))
+                conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
+                conn.commit() 
+                send_log(reason, 1)
+        await ctx.send(f"Whiped {userid} with Reason {reason}!")
+    else:
+        send_log(f"Discord User with ID = {msgid} wanted to whipe website User {userid} with reason {reason}.", 1)
+        await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
+
+@bot.command()
+async def deleteUserCompetly(ctx, userid, reason):
+    author = ctx.message.author
+    msgid = int(author.id)
+
+    if msgid == 918216902885670982:
+        with get_conn() as conn:
+                conn.execute("DELETE FROM users WHERE id = ?", (userid,))
+                conn.commit() 
+                send_log(f"Deleted User: {userid} completly with reason : {reason}", 1)
+        await ctx.send(f"Deleted {userid} completly with Reason {reason}!")
+    else:
+        send_log(f"Discord User with ID = {msgid} wanted to delete website User {userid} completly with reason {reason}.", 1)
+        await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 
 
+@bot.command()
+async def list(ctx):
+    author = ctx.message.author
+    msgid = int(author.id)
+
+    if msgid == 918216902885670982:
+        collum = -1
+        with get_conn() as conn:
+            collum = conn.execute("SELECT id, created_at, is_restricted, ip_address FROM users").fetchall()
+
+        text = "\n".join(f"{row['id']} | {row['ip_address']} | restricted={row['is_restricted']}" for row in collum)
+        await ctx.send(text or "No Users Found...")
+    else:
+        send_log(f"Discord User with Id = {msgid} tried to List All Users!")
+        await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
+
+@bot.command()
+async def getInfo(ctx, uid):
+    author = ctx.message.author
+    msgid = int(author.id)
+
+    if msgid == 918216902885670982:
+
+        with get_conn() as conn:
+            collum = conn.execute("SELECT id, created_at, is_restricted, ip_address FROM users WHERE id = ?", (uid,)).fetchone()
+            collum2 = conn.execute("SELECT subdomain, updated_at FROM subdomains WHERE id = ?", (uid,)).fetchone()
+            collum3 = conn.execute("SELECT updated_at FROM session WHERE id = ?", (uid,)).fetchone()
+
+            if collum is None:
+                await ctx.send(f"No Info Found for User {uid}")
+                return -1
+
+            text = f"Data Found:\nUser : {collum['id']} | {collum['ip_address']} | restricted={collum['is_restricted']}\nUser : {collum['id']} | Current Subdomain: {collum2['subdomain'] if collum2 else 'None'} | Last Subdomain Update: {collum2['updated_at'] if collum2 else 'N/A'}\nUser : {collum['id']} |Last Session : {collum3['updated_at'] if collum3 else 'N/A'}"
+            await ctx.send(text or f"No Info Found for User {uid}")
+    else:
+        send_log(f"Discord User with Id = {msgid} tried to List All Users!")
+        await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 
+@bot.event
+async def on_command_error(ctx, error):
+    original = getattr(error, "original", error)
+    
+    print(f"[BOT ERROR] Command '{ctx.command}' failed: {original!r}")
+    
+    traceback.print_exception(type(original), original, original.__traceback__)
+    
+    send_log(f"Error in command `{ctx.command}`: `{original}`", 2)
 
 
 
@@ -379,7 +493,7 @@ def login():
             )
             return resp # returning to the client
         else:
-            return render_template('failure.html') # nope
+            return render_template('login.html', error = 1) # nope
     return render_template('login.html') # if the form didnt got filled, then send the user the form
 
 
@@ -392,9 +506,9 @@ def register():
         pw = MakeNewUser(ip_addr) # get an password
 
         if pw == -1: # error handeling
-            return f"An user is already registerd from {ip_addr}. Please contact Support"
+            return render_template("register.html", error=-1)
         elif pw == -2:
-            return "An Error occured. Try again or contact support."
+            return render_template("register.html", error=-2)
         else:
             if VerifyUser(password=pw, ip_addr=ip_addr) >= 0: # check if everything worked
                 resp = make_response(f""" 
@@ -433,7 +547,7 @@ def otp_input():
                 key = conn.execute("SELECT * FROM user_2fa WHERE id = ?", (VerifyUser(password=password, ip_addr=ip_addr),)).fetchone() #get the otp passkey secret key
 
             if key == -1:
-                return -1 # check if the key got changed to the coll
+                return render_template("failure.html", reason="There was an error with the SQLite Query at otp_input!") # check if the key got changed to the coll
 
             totp_verify = pyotp.TOTP(key["totp_secret"]) # get the needed thing 
             
@@ -455,9 +569,9 @@ def otp_input():
                 )
                 return resp
             else:
-               return render_template('failure.html')  # TOPTP not ok
+               return render_template('otp_input.html', error="Your OTP Code was not correct. Please Try again with an New code!")  # TOPTP not ok
         else:
-            return render_template('failure.html') #Password/Ip not matching
+            return render_template('otp_input.html', error="Your Password/IP dont Match...") #Password/Ip not matching
     return render_template('otp_input.html') # sending the form
 
 @app.route('/verify_otp.html')
@@ -470,21 +584,9 @@ def otp_verify_afther_creation():
         userid = VerifyUser(password=password, ip_addr=ip_addr) # gets the userid
 
         if ret == -1: # If an error happens
-            return f"An Error Happend and your Directory cant be made. This is NOT supposed to happen. Please contact me and say your id is {userid}"
+            return render_template("verify_otp.html",error=f"An Error Happend and your Directory cant be made. This is NOT supposed to happen. Please contact me and say your id is {userid}")
 
-        return f"""
-<!DOCTYPE html>
-<html>
-    <body>
-        <h3>Setup your OTP now - You will need it to login again:</h3>
-        <br><br>
-        <img src="/static/qr/{userid}/qr_auth.png" alt="Your otp password">
-        <br><br>
-        <a href="otp_input.html"> Continue to Verify OTP</a>
-    </body>
-</html>
-    
-""" # returns the qr code to scan with the phine. then routes to /otp_input
+        return render_template("verify_otp.html", userid=userid) # returns the qr code to scan with the phine. then routes to /otp_input
 
 @app.route('/make_domain', methods=['POST'])
 @app.route('/make_domain.html', methods=['POST'])
@@ -503,13 +605,30 @@ def homepage():
             if retourncode == -1: # if something happend
                 return render_template('failure.html')
             elif retourncode == -2: # if the user added .freedomain.meme in the subdomain
-                return "Sorry. Please DO NOT include .freedomain.meme in your A record!!!"
+                return render_template("home_loggedin.html", error=-2)
             elif retourncode == 0:
-                return render_template('sucsess.html') # everything worked
+                return render_template('home_loggedin.html', has_subdomain=1, sucsess_create=1) # everything worked
             else:
-                return f"Your Ip was already Taken. Rerouted you to {retourncode}.{domainname}.freedomain.meme"
-    return render_template('failure.html') # the session verify didnt worked 
+                return render_template("home_loggedin.html", has_subdomain=1)
+    return render_template('home_loggedin.html', notLogged=1) # the session verify didnt worked 
 
+@app.route('/removedomain')
+@app.route('/removedomain.html')
+def remove():
+    session = request.cookies.get('session')
+    pw = request.cookies.get('pw')
+    ip_addr = request.remote_addr
+
+    id = VerifyUser(pw, ip_addr)
+
+    if id > 0:
+        if verify(id, session) == 1:
+            removeDomainUser(id)
+            return render_template('home_loggedin.html', has_subdomain=0)
+        else:
+            return render_template('home_loggedin.html', notLogged=1)
+    else:
+        return render_template('home_loggedin.html', notLogged=1) 
 
 
 @app.route('/homepage')
@@ -523,9 +642,32 @@ def homepagev2():
         return render_template("login.html")
 
     if verify(VerifyUser(pw, ip_addr), session) == 1:
-        return render_template("home_loggedin.html")
+        with get_conn() as conn:
+            subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
+            ip = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
+
+            if has_subdomain is None:
+                return render_template('home_loggedin.html', has_subdomain=0)
+
+            dns_existing = nc.dns.get("freedomain.meme")
+            record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
+            ip = record.value if record else None
+
+            return render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip)
     else:
         return render_template("login.html")
+
+@app.errorhandler(Exception)
+def handle_all_errors(e):
+    import traceback
+    tb = traceback.format_exc()
+    
+    print(f"[FLASK ERROR] {e!r}")
+    print(tb)
+    send_log(f"Flask Error on {request.path}: {e!r}\n```{tb[-1500:]}```", 3)
+    
+    return "Internal Server Error :(", 500
+
 
 if __name__ == '__main__':
     init_db()

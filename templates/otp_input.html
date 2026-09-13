@@ -2,6 +2,11 @@
 <html>
     <body>
         <h3>Please Enter your OTP Code</h3>
+
+        {% if error is not None %}
+            <h3>Whoops! {{error}}</h3>
+        {% endif %}
+
         <form method="post" action="/otp_input">
             <input type="text" name="otp" required>
             <br><br>

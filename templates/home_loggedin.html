@@ -8,18 +8,51 @@
 <body>
     <h1>Welcome, Logged In User!</h1>
     <br>
-    <h3>Wanna make a new Domain?</h3>
-    <br><br>
-    <form method="post" action="/make_domain.html">
-        <h6>Your Subdomain name (e.g. for test.freedomain.meme, input please ONLY test)</h6>
-        <input type="text" name="domainname" required>
+    {% if notLogged == 1 %}
+        <h3>Whoops! Your Session verification didnt work... Please</h3>
+        <a href="/login.html">Login Again!</a>
+        <br>
+    {% endif %}
+    {% if has_subdomain == 0 %}
+        <h3>Wanna make a new Domain?</h3>
         <br><br>
-        <h6>The IP where it goes to</h6>
-        <input type="text" name="ip" required>
-        <br><br>
-        <input type="submit" value="submit">
-    </form>
+        <form method="post" action="/make_domain.html">
+            <h6>Your Subdomain name (e.g. for test.freedomain.meme, input please ONLY test)</h6>
 
+            {% if error == -2 %}
+                <h1>Do NOT include ".freedomain.meme" in the field Below. Thanks!</h1>
+            {% endif %}
+
+            <input type="text" name="domainname" required>
+            <br><br>
+            <h6>The IP where it goes to</h6>
+            <input type="text" name="ip" required>
+            <br><br>
+            <input type="submit" value="submit">
+        </form>
+        <br><br>
+    {% ENDIF %}
+
+    {% if sucsess_create == 1%}
+        <h3>Created Your Subdomain!!!</h3>
+    {% endif %}
+    {% if error_create == 1%}
+        <h3>Couldn't create your subdomain...</h3>
+    {% endif %}
+    {% if ban_create == 1%}
+        <h3>You got Limited by our Automated service.</h3>
+    {% endif %}
+    {% if has_subdomain == 1 %}
+        <h3>Your Subdomain is Currently {{subdomainname}}.freedomain.meme!</h3>
+        <br>
+        <h3>It is redirecting to {{ip}}</h3>
+
+        <form methode="post" action="/removedomain.html">
+            <h5>Want do delete Your Subdomain?</h5>
+            <br><br>
+            <input type="submit" value="submit">
+        </form>
+    {% ENDIF %}
     <h1>What else?</h1>
     Well idk. There isnt moucht to do instad of 
     <a href="https://github.com/TherealONE12">goto my Github Page</a>

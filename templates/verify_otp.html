@@ -1,11 +1,14 @@
 <!DOCTYPE html>
 <html>
     <body>
-        <h3>Please Enter your OTP Code</h3>
-        <form method="post" action="/verify_otp">
-            <input type="text" name="otp" required>
-            <br><br>
-            <input type="submit" value="submit">
-        </form>
+        <h3>Setup your OTP now - You will need it to login again:</h3>
+        <br><br>
+        {% if error is not None %}
+            <h4>{{error}}</h4>
+        {% endif %}
+        <br><br>
+        <img src="/static/qr/{{userid}}/qr_auth.png" alt="Your otp password">
+        <br><br>
+        <a href="otp_input.html"> Continue to Verify OTP</a>
     </body>
 </html>
