@@ -4,6 +4,8 @@ from namecheap.models import DNSRecord
 from namecheap import Namecheap
 from dotenv import load_dotenv
 from discord.ext import commands
+from bs4 import BeautifulSoup
+from scraper import start_thingy
 import discord
 import pyotp
 import secrets
@@ -16,6 +18,9 @@ import os
 import threading
 import asyncio
 import traceback
+import requests
+
+
 
 # Setup stuff
 load_dotenv()
@@ -291,6 +296,28 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
 
     ok = verify(id, session) # verifying the session again if the restricted value updated
 
+    if ok == 1: # Not wanting to ban anyone if someone cracked a users pw
+        results = start_thingy(str(ip), 25)
+        
+        if results is None:
+            with get_conn() as conn:
+                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
+                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
+                send_ban(id, subdomainname, ip, "Banned Because Webscraper found not a Singular word")
+                return -10  
+
+        for result in results:
+            predicted = predict_prob(result)
+            if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
+                with get_conn() as conn:
+                    conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
+                    conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
+                    send_ban(id, subdomainname, ip, "Banned by Auto-Scraper-Badword Filter.")
+                    return -3
+
+    ok = verify(id, session) # verifying the session again if the restricted value updated
+
+    
     if ok == 1:
         subdomain_state = -1
         with get_conn() as conn:
@@ -337,7 +364,7 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
 
 def removeDomainUser(userid:int):
     with get_conn() as conn:
-        subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
+        subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (userid,)).fetchone()
 
 
         if subdomainname is None:
@@ -349,13 +376,19 @@ def removeDomainUser(userid:int):
         record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
         ip = record.value if record else None
 
-        record = DNSRecord(name=subdomainname, type="A", value=ip, ttl=1799)
-        nc.dns.delete("freedomain.meme", record)
+    
+        nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip)
 
         conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid))
         conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
         conn.commit() 
     send_log(f"User {userid} removed His Subdomain!", 4)
+
+
+def scrapeWebsite(ip:str, depth:int) -> list:
+    res = requests.get(ip)
+    soup = BeautifulSoup(res.content, 'html.parser')
+    
 
 
 # All discord routes are below
@@ -635,6 +668,10 @@ def homepage():
                 return render_template('failure.html')
             elif retourncode == -2: # if the user added .freedomain.meme in the subdomain
                 return render_template("home_loggedin.html",error=-2, has_subdomain=0)
+            elif retourncode == -3: # if the user got banned by web scraper
+                return render_template("home_loggedin.html",error=-3, has_subdomain=0, ban_create=1)
+            elif retourncode == -10: # Nothing found Words
+                return render_template("home_loggedin.html",error=-10, has_subdomain=0, ban_create=1)
             elif retourncode == 0:
                 return render_template('home_loggedin.html', has_subdomain=1, sucsess_create=1, subdomainname=domainname, ip=ip_link) # everything worked
             else:

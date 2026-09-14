@@ -42,6 +42,12 @@
     {% if ban_create == 1%}
         <h3>You got Limited by our Automated service.</h3>
     {% endif %}
+    {% if error == -3%}
+        <h3>You got Limited by our Web scraper, as it belives you have not Bad Words on your website. If you belive, this is an error, contact Support.</h3>
+    {% endif %}
+    {% if error == -10%}
+        <h3>You got Limited by our Web scraper, as it Found no content. If you belive, this is an error or you "accidentally" registerd a dead ip, contact Support.</h3>
+    {% endif %}
     {% if has_subdomain == 1 %}
         <h3>Your Subdomain is Currently {{subdomainname}}.freedomain.meme!</h3>
         <br>
