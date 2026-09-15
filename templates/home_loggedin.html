@@ -16,11 +16,14 @@
     {% if has_subdomain == 0 %}
         <h3>Wanna make a new Domain?</h3>
         <br><br>
+        <h6>For Testing you could try 1.1.1.1</h6>
+        <br><br>
         <form method="post" action="/make_domain.html">
             <h6>Your Subdomain name (e.g. for test.freedomain.meme, input please ONLY test)</h6>
 
             {% if error ==-2 %}
                 <h1>Do NOT include ".freedomain.meme" in the field Below. Thanks!</h1>
+                <h4>If you didnt, Please make sure the subdomain is a Valid A level record! ANd that the IP is also valid!</h4>
             {% endif %}
 
             <input type="text" name="domainname" required>
@@ -59,6 +62,14 @@
             <input type="submit" value="submit">
         </form>
     {% endif %}
+
+    <h1>Want to delet your Account?</h1>
+    <h5>Unreversable, No second confirmation.</h5>
+
+    <form methode="post" action="/deleteme.html">
+        <input type="submit" value="submit">
+    </form>
+
     <h1>What else?</h1>
     Well idk. There isnt moucht to do instad of 
     <a href="https://github.com/TherealONE12">goto my Github Page</a>

@@ -20,7 +20,7 @@ import threading
 import asyncio
 import traceback
 import requests
-
+import ipaddress, re
 
 
 # Setup stuff
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS users(
     hash_secret    TEXT NOT NULL,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_restricted   INTEGER NOT NULL DEFAULT 0,
-    ip_address TEXT NOT NULL UNIQUE
+    ip_address TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS user_2fa(
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS session(
 
 # All discord helper funktions are below
 
-def run_bot():
+def run_bot(): # starts and runs the bot ASYNC, as  flask/Dc are blocking themself...
     while True:
         try:
             asyncio.run(bot.start(TOKEN))
@@ -140,7 +140,7 @@ def send_log(txt: str, critical_lvl: int): # 1 = warn, 2 = Error 3 = Failure 4 =
     asyncio.run_coroutine_threadsafe(coro, bot.loop)
 
 
-def send_newDomain(domainname: str):
+def send_newDomain(domainname: str): # Notifies of new domains
     channel = bot.get_channel(1548007928588406907)
 
     if channel is None:
@@ -162,7 +162,7 @@ def send_newDomain(domainname: str):
     coro =  channel.send(embed=embed1)
     asyncio.run_coroutine_threadsafe(coro, bot.loop)
 
-def send_ban(userid: int, domainname: str, ip:str, reason:str):
+def send_ban(userid: int, domainname: str, ip:str, reason:str): # Notifies of Bans
     channel = bot.get_channel(1548007980740382741)
 
     if channel is None:
@@ -259,14 +259,16 @@ def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the user
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE hash_secret = ?", (hash_pw,)).fetchone() # checking if that password exists
         conn.commit()
+
+        if row['ip_address'] != ip_addr:
+            send_log(f"User {row['id']} Logged in from {ip_addr}, but Originates from {row['ip_addr']}", 4)
+
         if row == None: #if not, then deny acsess
-            return -1
-        elif row['ip_address'] != ip_addr: # if the ip adress is wrong, also deny acsess (sorry to all non-static ip users)
             return -1
         elif row['is_restricted'] == 1:# If the account is restricted, also deny acsess (What did u do??)
             return -1
         else:
-            return row['id'] # ELse, give back the userid 
+            return row['id'] # Else, give back the userid 
 
 
 
@@ -282,13 +284,21 @@ def verify(id: int, session: str): # Usexd to verify the sessiontoken. Idk why I
 
         restricted = conn.execute("SELECT is_restricted FROM users WHERE id = ?", (id,)).fetchone()  # fetched, if the user got restricted
 
-    if id == -1 or age == -1 or time.time() - age >= 60*30 or restricted  == 1 or mimimi['session_key'] != session: #Big fat verification logik
+    if id == -1 or age == -1 or time.time() - age >= 60*30 or restricted['is_restricted']  == 1 or mimimi['session_key'] != session: #Big fat verification logik
         return -1
     else:
         return 1
 
 def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a domain
     if "freedomain.meme" in subdomainname: # checks if the main domain is in the subdomain. if so, then DENY the request.
+        return -2
+
+    if not re.fullmatch(r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?', subdomainname):# check if subdomainname is valid
+        return -2
+
+    try:
+        ip_obj = ipaddress.ip_address(ip) # cecks if this is actually an ip adress
+    except ValueError:
         return -2
 
     if verify(id, session) == 1: # Not wanting to ban anyone if someone cracked a users pw
@@ -387,47 +397,43 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
             return -1
 
 
-def removeDomainUser(userid:int):
+def removeDomainUser(userid:int): # removes The domain from an User
     with get_conn() as conn:
         subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (userid,)).fetchone()
 
 
-        if subdomainname is None:
+        if subdomainname is None: # if he hasnt none, then jsut render none
             return render_template('home_loggedin.html', has_subdomain=0)
 
-        subdomainname = subdomainname['subdomain']
+        subdomainname = subdomainname['subdomain'] # gets the name
 
-        dns_existing = nc.dns.get("freedomain.meme")
-        record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
-        ip = record.value if record else None
+        dns_existing = nc.dns.get("freedomain.meme") # gets the existing stuff
+        record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A") # and extracts his details
+        ip = record.value if record else None # gets his ip
 
     
-        nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip)
+        nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip) # delets his stuff
 
-        conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid))
+        conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid)) # uopdates the db
         conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
         conn.commit() 
-    send_log(f"User {userid} removed His Subdomain!", 4)
+    send_log(f"User {userid} removed His Subdomain!", 4) # and sends a log to me
 
-
-def scrapeWebsite(ip:str, depth:int) -> list:
-    res = requests.get(ip)
-    soup = BeautifulSoup(res.content, 'html.parser')
     
 
 
 # All discord routes are below
 
-@bot.event
+@bot.event # if the bot is ready, tell me
 async def on_ready():
     print(f"Logged in Admin-Bot as {bot.user}")
     
-@bot.command()
+@bot.command() # a simple, check If I am responding cmd
 async def test(ctx, arg):
     await ctx.send(f"You said $test {arg}!")
 
 
-@bot.command()
+@bot.command() # bans a user
 async def ban(ctx, userid, reason):
     author = ctx.message.author
     msgid = int(author.id)
@@ -443,7 +449,7 @@ async def ban(ctx, userid, reason):
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 @bot.command()
-async def unbanKeepDomain(ctx, userid, reason):
+async def unbanKeepDomain(ctx, userid, reason): # Unbans a Usser and keeps his domain
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -458,7 +464,7 @@ async def unbanKeepDomain(ctx, userid, reason):
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 @bot.command()
-async def whipe(ctx, userid, reason):
+async def whipe(ctx, userid, reason): # whipes a user 
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -474,7 +480,7 @@ async def whipe(ctx, userid, reason):
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 @bot.command()
-async def deleteUserCompetly(ctx, userid, reason):
+async def deleteUserCompetly(ctx, userid, reason): # deletes a user from the plattform
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -491,7 +497,7 @@ async def deleteUserCompetly(ctx, userid, reason):
 
 
 @bot.command()
-async def list(ctx):
+async def list(ctx): # lists all users
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -507,7 +513,7 @@ async def list(ctx):
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 @bot.command()
-async def getInfo(ctx, uid):
+async def getInfo(ctx, uid): # get Info about a specific user
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -530,7 +536,7 @@ async def getInfo(ctx, uid):
 
 
 @bot.event
-async def on_command_error(ctx, error):
+async def on_command_error(ctx, error): # sends errors from the dc bot to a dc channel. Wait. That... sounds strange??
     original = getattr(error, "original", error)
     
     print(f"[BOT ERROR] Command '{ctx.command}' failed: {original!r}")
@@ -625,8 +631,8 @@ def otp_input():
             totp_verify = pyotp.TOTP(key["totp_secret"]) # get the needed thing 
             
             if totp_verify.verify(otp=otp): # if the otp was correct
-                session_alphabet = string.printable # get all printable chars (WHat could possibly go wrong, lol)
-                session_id = ''.join(secrets.choice(session_alphabet) for i in range(128))  #  make a new session id with 128 chars
+
+                session_id = secrets.token_urlsafe(96)
 
                 userid = VerifyUser(password, ip_addr) # get the user id
                 with get_conn() as conn:
@@ -704,7 +710,7 @@ def homepage():
     return render_template('home_loggedin.html', notLogged=1) # the session verify didnt worked 
 
 @app.route('/removedomain')
-@app.route('/removedomain.html')
+@app.route('/removedomain.html') # removes a domain
 def remove():
     session = request.cookies.get('session')
     pw = request.cookies.get('pw')
@@ -720,6 +726,28 @@ def remove():
             return render_template('home_loggedin.html', notLogged=1)
     else:
         return render_template('home_loggedin.html', notLogged=1) 
+
+
+@app.route('/deleteme')
+@app.route('/deleteme.html')
+def removeme():
+    session = request.cookies.get('session')
+    pw = request.cookies.get('pw')
+    ip_addr = request.remote_addr
+
+
+    id = VerifyUser(pw, ip_addr)
+
+    if id > 0:
+        removeDomainUser(id)
+        with get_conn() as conn:
+            conn.execute("DELETE FROM users WHERE id = ?", (id,))
+            conn.commit() 
+            send_log(f"Deleted {userid} completly as of His wish!!", 4)
+            return "Okay Bye! Thanks for being part of this journey!"
+    else:
+        return -1
+
 
 
 @app.route('/homepage')
@@ -750,19 +778,19 @@ def homepagev2():
     else:
         return render_template("login.html")
 
-@app.errorhandler(Exception)
+@app.errorhandler(Exception) # handels Errors from frontend/SQL
 def handle_all_errors(e):
     import traceback
     tb = traceback.format_exc()
     
-    print(f"[FLASK ERROR] {e!r}")
+    print(f"[FLASK ERROR] {e!r}") # prints into console
     print(tb)
-    send_log(f"Flask Error on {request.path}: {e!r}\n```{tb[-1500:]}```", 3)
+    send_log(f"Flask Error on {request.path}: {e!r}\n```{tb[-1500:]}```", 3) # ands sends me the log via dc (PLEASE KEEP EMPTY)
     
-    return "Internal Server Error :(", 500
+    return "Internal Server Error :(", 500 # Says sorry to the user
 
 
-if __name__ == '__main__':
+if __name__ == '__main__': # runs the whole stuff
     init_db()
     TOKEN = os.getenv('DC_BOT_TKN')
 
