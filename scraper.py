@@ -1,16 +1,12 @@
 # Adapted from r0xd4n3t/spider-to-wordlist (Apache 2.0)
-
 # https://github.com/r0xd4n3t/spider-to-wordlist
-
 # Original License File from 14.09.2026 At 10:00 is under "Apache 2.0 License From scraper.py original projekt.txt"
-
 # Go Check Him out!!!!!
-
 
 import re
 import time
-import os
 from urllib.parse import urlparse, urljoin
+
 import urllib3
 from bs4 import BeautifulSoup
 from urllib3.exceptions import InsecureRequestWarning
@@ -19,42 +15,44 @@ import logging
 import nltk
 from nltk.corpus import stopwords
 from collections import Counter
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Disable insecure request warnings
 urllib3.disable_warnings(category=InsecureRequestWarning)
 
-nltk.download('stopwords')
 
-wordlist = []
+try:
+    stopwords.words('english')
+except LookupError:
+    nltk.download('stopwords')
+
 
 class WebCrawler:
-    def __init__(self, starting_urls, wordlist_file='wordlist.txt', cleanup_interval=60, cleanup_delay=5, max_retries=3):
+    def __init__(self, starting_urls, cleanup_interval=60, cleanup_delay=5, max_retries=2, host_header=None):
         self.visited_urls = set()
-        self.wordlist = set()
+        self.wordlist = set()         
         self.urls_to_crawl = set()
-        self.wordlist_file = wordlist_file
         self.cleanup_interval = cleanup_interval
         self.cleanup_delay = cleanup_delay
-        self.max_retries = max_retries
+        self.max_retries = max_retries 
         self.last_cleanup_time = time.time()
         self.allowed_domains = []
-        self.http = urllib3.PoolManager(cert_reqs='CERT_NONE')  # Skip SSL verification
+        self.host_header = host_header  
+        self.reachable = False        
+        self.http = urllib3.PoolManager(cert_reqs='CERT_NONE') 
 
-        # Initialize allowed domains and URLs to crawl
         for url in starting_urls:
             self.allowed_domains.append(urlparse(url).netloc)
             self.urls_to_crawl.add(url)
 
     def build_wordlist(self, words):
-        global wordlist
         stop_en = set(stopwords.words('english'))
         for word in words:
             cleaned = word.strip().lower()
             if cleaned.isalpha() and cleaned not in stop_en:
-                wordlist.append(cleaned)
-        return wordlist
+                self.wordlist.add(cleaned)
 
     def set_random_user_agent(self):
         """Generate a random user agent."""
@@ -62,25 +60,48 @@ class WebCrawler:
         return user_agent.random
 
     def fetch_url(self, url):
-        """Fetch the URL with retries and handle SSL errors."""
         headers = {'User-Agent': self.set_random_user_agent()}
-        for attempt in range(self.max_retries):
-            try:
-                response = self.http.request('GET', url, headers=headers)
-                return response
-            except urllib3.exceptions.SSLError as e:
-                logging.warning(f"SSL error: {url} - {e}")
-            except urllib3.exceptions.MaxRetryError as e:
-                logging.warning(f"Max retries exceeded: {url} - {e}")
-            except Exception as e:
-                logging.warning(f"Error fetching {url}: {e}")
-            time.sleep(1)
+        if self.host_header:
+            headers['Host'] = self.host_header
+
+        candidates = [url]
+        if url.startswith("https://"):
+            candidates.append("http://" + url[len("https://"):])
+
+        timeout = urllib3.Timeout(connect=3.0, read=5.0)
+
+        for candidate in candidates:
+            for attempt in range(self.max_retries):
+                try:
+                    response = self.http.request(
+                        'GET', candidate, headers=headers, timeout=timeout, retries=False
+                    )
+                    if response.status < 400:
+                        self.reachable = True
+                        return response
+                    logging.info(f"Non-2xx/3xx status {response.status}: {candidate}")
+                    break 
+                except urllib3.exceptions.SSLError as e:
+                    logging.warning(f"SSL error (SNI/Cloudflare-typisch): {candidate} - {e}")
+                    break  
+                except urllib3.exceptions.MaxRetryError as e:
+                    logging.warning(f"Connection failed: {candidate} - {e}")
+                    break
+                except urllib3.exceptions.TimeoutError as e:
+                    logging.warning(f"Timeout: {candidate} - {e}")
+                    time.sleep(0.5) 
+                except Exception as e:
+                    logging.warning(f"Error fetching {candidate}: {e}")
+                    time.sleep(0.5)
         return None
 
     def is_valid_domain(self, url):
         """Check if the URL is within the allowed domain and subdomains."""
         parsed_url = urlparse(url)
-        return any(parsed_url.netloc == domain or parsed_url.netloc.endswith('.' + domain) for domain in self.allowed_domains)
+        return any(
+            parsed_url.netloc == domain or parsed_url.netloc.endswith('.' + domain)
+            for domain in self.allowed_domains
+        )
 
     def is_valid_url(self, url):
         """Check if the URL is valid and not a JavaScript or mailto link."""
@@ -89,7 +110,6 @@ class WebCrawler:
 
     def crawl_domain(self, base_url):
         """Crawl all pages within the specified domain."""
-        domain = urlparse(base_url).netloc
         self.urls_to_crawl.add(base_url)
 
         while self.urls_to_crawl:
@@ -103,7 +123,6 @@ class WebCrawler:
                 continue
 
             html = response.data
-
             try:
                 soup = BeautifulSoup(html, 'html.parser')
             except Exception as e:
@@ -118,30 +137,35 @@ class WebCrawler:
             for link in soup.find_all('a', href=True):
                 href = link['href']
                 next_url = urljoin(url, href)
-                if self.is_valid_domain(next_url) and self.is_valid_url(next_url) and next_url not in self.visited_urls:
+                if (
+                    self.is_valid_domain(next_url)
+                    and self.is_valid_url(next_url)
+                    and next_url not in self.visited_urls
+                ):
                     self.urls_to_crawl.add(next_url)
 
             logging.info(f"Crawled page: {url} [{len(words)} word(s) found]")
 
-    def crawl(self):
-        """Crawl the web starting from the initial URLs."""
+    def crawl(self) -> bool:
+        
         try:
-            for base_url in self.allowed_domains:  
+            for base_url in self.allowed_domains:
                 logging.info(f"Starting crawl for domain: {base_url}")
                 self.crawl_domain(f"https://{base_url}")
         except KeyboardInterrupt:
             logging.info("Crawling process interrupted. Cleaning up and exiting gracefully.")
+        return self.reachable
 
 
-def start_thingy(url:str, amount:int) -> list:
-    wordlist = []
+def start_thingy(url: str, amount: int):
+
     starting_urls = [f"https://{url}"]
-
     crawler = WebCrawler(starting_urls)
-    crawler.crawl()
 
-    counts = Counter(wordlist) 
-    
+    reachable = crawler.crawl()
+    if not reachable:
+        return None
+
+    counts = Counter(crawler.wordlist)
     top_words = [word for word, count in counts.most_common(amount)]
-    
     return top_words

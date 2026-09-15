@@ -14,6 +14,7 @@ import sqlite3
 import hashlib
 import qrcode
 import time
+from time import sleep
 import os
 import threading
 import asyncio
@@ -72,7 +73,12 @@ CREATE TABLE IF NOT EXISTS session(
 # All discord helper funktions are below
 
 def run_bot():
-    asyncio.run(bot.start(TOKEN))
+    while True:
+        try:
+            asyncio.run(bot.start(TOKEN))
+        except Exception as e:
+            print(f"Bot Crashed, retrying soon! Reason: {e}")
+            time.sleep(10)
 
 def send_log(txt: str, critical_lvl: int): # 1 = warn, 2 = Error 3 = Failure 4 = Logmsg
     channel = bot.get_channel(1548006957091393597)
@@ -295,30 +301,6 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                 return -1 
 
     ok = verify(id, session) # verifying the session again if the restricted value updated
-
-    if ok == 1: # Not wanting to ban anyone if someone cracked a users pw
-        results = start_thingy(str(ip), 25)
-        
-        if results is None:
-            with get_conn() as conn:
-                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
-                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
-                send_ban(id, subdomainname, ip, "Banned Because Webscraper found not a Singular word")
-                return -10  
-
-        send_log(f"Scraped Website {ip}, found top 25 Words to be: {results}", 4)
-
-        for result in results:
-            predicted = predict_prob([result])
-            if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
-                with get_conn() as conn:
-                    conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
-                    conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
-                    send_ban(id, subdomainname, ip, "Banned by Auto-Scraper-Badword Filter.")
-                    return -3
-
-    ok = verify(id, session) # verifying the session again if the restricted value updated
-
     
     if ok == 1:
         subdomain_state = -1
@@ -342,6 +324,27 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                     record = DNSRecord(name=subdomainname, type="A", value=ip, ttl=1799) # make the record
                     nc.dns.add("freedomain.meme",record) # and write it to the namecheap servers
 
+                    time.sleep(60)
+
+                    results = start_thingy(f"{subdomainname}.freedomain.meme", 25)
+        
+                    if results is None:
+                        nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip)
+                        send_log(f"Manual Verify needed for {subdomainname} ({ip})", 3)
+                        return -10
+
+                    send_log(f"Scraped Website {ip}, found top 25 Words to be: {results}", 4)
+
+                    for result in results:
+                        predicted = predict_prob([result])
+                        if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
+                            with get_conn() as conn:
+                                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
+                                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
+                                send_ban(id, subdomainname, ip, "Banned by Auto-Scraper-Badword Filter.")
+                                return -3
+
+
                     with get_conn() as conn: # write the new cool domain into the db
                         conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,subdomainname)).fetchone() # current subdomain
                     send_log(f"User {id} made an Domain named {subdomainname}.freedomain.meme at {time.time()} with link to {ip}!", 1)
@@ -353,6 +356,26 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                 if subdomain_state is None or str(subdomain_state['subdomain']) == "-1":
                     record = DNSRecord(name=newdomain, type="A", value=ip, ttl=1799) # make the record and ship it to the servers. same as above
                     nc.dns.add("freedomain.meme",record)
+                    
+                    sleep(60)
+
+                    results = start_thingy(f"{newdomain}.freedomain.meme", 25)
+        
+                    if results is None:
+                        nc.dns.delete(domain="freedomain.meme", name=newdomain, record_type="A", value=ip)
+                        send_log(f"Manual Verify needed for {newdomain} ({ip})", 3)
+                        return -10
+
+                    send_log(f"Scraped Website {ip}, found top 25 Words to be: {results}", 4)
+
+                    for result in results:
+                        predicted = predict_prob([result])
+                        if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
+                            with get_conn() as conn:
+                                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
+                                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
+                                send_ban(id, subdomainname, ip, "Banned by Auto-Scraper-Badword Filter.")
+                                return -3
 
                     with get_conn() as conn: # write the new cool domain into the db
                         conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,subdomainname)).fetchone() # current subdomain
