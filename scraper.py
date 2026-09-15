@@ -134,6 +134,7 @@ class WebCrawler:
 
 
 def start_thingy(url:str, amount:int) -> list:
+    wordlist = []
     starting_urls = [f"https://{url}"]
 
     crawler = WebCrawler(starting_urls)

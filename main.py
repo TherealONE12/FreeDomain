@@ -306,8 +306,10 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                 send_ban(id, subdomainname, ip, "Banned Because Webscraper found not a Singular word")
                 return -10  
 
+        send_log(f"Scraped Website {ip}, found top 25 Words to be: {results}", 4)
+
         for result in results:
-            predicted = predict_prob(result)
+            predicted = predict_prob([result])
             if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
                 with get_conn() as conn:
                     conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
