@@ -15,6 +15,7 @@ import logging
 import nltk
 from nltk.corpus import stopwords
 from collections import Counter
+from web_target import normalize_url
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,7 +33,7 @@ except LookupError:
 class WebCrawler:
     def __init__(self, starting_urls, cleanup_interval=60, cleanup_delay=5, max_retries=2, host_header=None):
         self.visited_urls = set()
-        self.wordlist = set()         
+        self.wordlist = Counter()      
         self.urls_to_crawl = set()
         self.cleanup_interval = cleanup_interval
         self.cleanup_delay = cleanup_delay
@@ -43,6 +44,10 @@ class WebCrawler:
         self.reachable = False        
         self.http = urllib3.PoolManager(cert_reqs='CERT_NONE') 
 
+        self.starting_urls = [normalize_url(url) for url in starting_urls]
+        self.max_pages = 100
+        self.last_response_url = None
+
         for url in starting_urls:
             self.allowed_domains.append(urlparse(url).netloc)
             self.urls_to_crawl.add(url)
@@ -52,7 +57,7 @@ class WebCrawler:
         for word in words:
             cleaned = word.strip().lower()
             if cleaned.isalpha() and cleaned not in stop_en:
-                self.wordlist.add(cleaned)
+                self.wordlist[cleaned] += 1
 
     def set_random_user_agent(self):
         """Generate a random user agent."""
@@ -73,14 +78,17 @@ class WebCrawler:
         for candidate in candidates:
             for attempt in range(self.max_retries):
                 try:
-                    response = self.http.request(
-                        'GET', candidate, headers=headers, timeout=timeout, retries=False
-                    )
-                    if response.status < 400:
-                        self.reachable = True
-                        return response
-                    logging.info(f"Non-2xx/3xx status {response.status}: {candidate}")
-                    break 
+                    current = candidate
+                    for redirect_count in range(6):
+                        response = self.http.request(
+                            'GET', current, headers=headers, timeout=timeout, retries=False, redirect=False
+                        )
+                        if response.status not in (301, 302, 303, 307, 308):
+                            break
+                        location = response.headers.get('Location')
+                        if not location or redirect_count == 5:
+                            break
+                        current = normalize_url(urljoin(current, location))
                 except urllib3.exceptions.SSLError as e:
                     logging.warning(f"SSL error (SNI/Cloudflare-typisch): {candidate} - {e}")
                     break  
@@ -112,7 +120,7 @@ class WebCrawler:
         """Crawl all pages within the specified domain."""
         self.urls_to_crawl.add(base_url)
 
-        while self.urls_to_crawl:
+        while self.urls_to_crawl and len(self.visited_urls) < self.max_pages:
             url = self.urls_to_crawl.pop()
             if url in self.visited_urls:
                 continue
@@ -122,6 +130,7 @@ class WebCrawler:
             if not response:
                 continue
 
+            url = self.last_response_url or url
             html = response.data
             try:
                 soup = BeautifulSoup(html, 'html.parser')
@@ -129,6 +138,8 @@ class WebCrawler:
                 logging.warning(f"Parser error: {url} - {e}")
                 continue
 
+            for element in soup(['skript', 'style', 'noskript']):
+                element.decompose()
             text = soup.get_text()
             words = re.findall(r"[a-zA-Z]+", text)
             words = [word.encode('ascii', 'ignore').decode('utf-8') for word in words]
@@ -136,7 +147,7 @@ class WebCrawler:
 
             for link in soup.find_all('a', href=True):
                 href = link['href']
-                next_url = urljoin(url, href)
+                next_url = urljoin(url, href).split('#', 1)[0]
                 if (
                     self.is_valid_domain(next_url)
                     and self.is_valid_url(next_url)
@@ -149,9 +160,9 @@ class WebCrawler:
     def crawl(self) -> bool:
         
         try:
-            for base_url in self.allowed_domains:
-                logging.info(f"Starting crawl for domain: {base_url}")
-                self.crawl_domain(f"https://{base_url}")
+            for base_url in self.starting_urls:
+                logging.info(f"Starting crawl for URL: {base_url}")
+                self.crawl_domain(base_url)
         except KeyboardInterrupt:
             logging.info("Crawling process interrupted. Cleaning up and exiting gracefully.")
         return self.reachable
@@ -159,11 +170,14 @@ class WebCrawler:
 
 def start_thingy(url: str, amount: int):
 
-    starting_urls = [f"https://{url}"]
-    crawler = WebCrawler(starting_urls)
-
+    try:
+        crawler = WebCrawler([normalize_url(starting_urls)])
+    except ValueError as e:
+        logging.warning("Invalid scrape target: %s", e)
+        return None
+    
     reachable = crawler.crawl()
-    if not reachable:
+    if not reachable or not crawler.wordlist:
         return None
 
     counts = Counter(crawler.wordlist)

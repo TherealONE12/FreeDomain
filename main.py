@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from discord.ext import commands
 from bs4 import BeautifulSoup
 from scraper import start_thingy
+from web_target import dns_target
 import discord
 import pyotp
 import secrets
@@ -297,7 +298,7 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
         return -2
 
     try:
-        ip_obj = ipaddress.ip_address(ip) # cecks if this is actually an ip adress
+        scrape_url, record_type, dns_value = dns_target(ip)
     except ValueError:
         return -2
 
@@ -331,15 +332,13 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
 
             if append == 0: # if no appending is required
                 if subdomain_state is None or str(subdomain_state['subdomain']) == "-1": # if no subdomain got set
-                    record = DNSRecord(name=subdomainname, type="A", value=ip, ttl=1799) # make the record
+                    record = DNSRecord(name=subdomainname, type=record_type, value=dns_value, ttl=1799) # make the record
                     nc.dns.add("freedomain.meme",record) # and write it to the namecheap servers
 
-                    time.sleep(60)
-
-                    results = start_thingy(f"{subdomainname}.freedomain.meme", 25)
+                    results = start_thingy(scrape_url, 25)
         
                     if results is None:
-                        nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip)
+                        # nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip)
                         send_log(f"Manual Verify needed for {subdomainname} ({ip})", 3)
                         return -10
 
@@ -369,10 +368,10 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                     
                     sleep(60)
 
-                    results = start_thingy(f"{newdomain}.freedomain.meme", 25)
+                    results = start_thingy(scrape_url, 25)
         
                     if results is None:
-                        nc.dns.delete(domain="freedomain.meme", name=newdomain, record_type="A", value=ip)
+                        # nc.dns.delete(domain="freedomain.meme", name=newdomain, record_type="A", value=ip)
                         send_log(f"Manual Verify needed for {newdomain} ({ip})", 3)
                         return -10
 
@@ -388,7 +387,7 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                                 return -3
 
                     with get_conn() as conn: # write the new cool domain into the db
-                        conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,subdomainname)).fetchone() # current subdomain
+                        conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,newdomain)).fetchone() # current subdomain
                     send_log(f"User {id} made an Domain named {newdomain}.freedomain.meme at {time.time()} with link to {ip}!", 1)
                     return append # different return to let the user know
                 else:
@@ -649,7 +648,7 @@ def otp_input():
                         subdomainname = subdomainname['subdomain']
 
                         dns_existing = nc.dns.get("freedomain.meme")
-                        record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
+                       "Invalid scrape target: %s", exc record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
                         ip = record.value if record else None
 
                         resp = make_response(render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip))
