@@ -1,4 +1,4 @@
-from flask import render_template, request, Flask, make_response
+from flask import render_template, request, Flask, make_response, abort
 from profanity_check import predict, predict_prob
 from namecheap.models import DNSRecord
 from namecheap import Namecheap
@@ -7,6 +7,7 @@ from discord.ext import commands
 from bs4 import BeautifulSoup
 from scraper import start_thingy
 from web_target import dns_target
+from werkzeug.middleware.proxy_fix import ProxyFix
 import discord
 import pyotp
 import secrets
@@ -39,6 +40,7 @@ bot = commands.Bot(command_prefix='$', intents=intents)
 
 app = Flask(__name__)
 
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 DB_PATH = "app.db"
 
@@ -549,12 +551,12 @@ async def on_command_error(ctx, error): # sends errors from the dc bot to a dc c
 
 # All Website routes are below
 
-@app.route('/')  # if root gets requested from the browser
+@app.route('/', methods=['GET', 'POST'])  # if root gets requested from the browser
 def ping():
     return render_template('homepage.html') # render that template
 
 
-@app.route('/login.html')
+@app.route('/login.html', methods=['GET', 'POST'])
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST': # if post (aka the form got filled)
@@ -575,7 +577,7 @@ def login():
     return render_template('login.html') # if the form didnt got filled, then send the user the form
 
 
-@app.route('/register.html')
+@app.route('/register.html', methods=['GET', 'POST'])
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST': # if the form got send
@@ -611,7 +613,7 @@ def register():
     return render_template('register.html') # if he hadnt clicked on the button (aka not a POST request, a GET request) then send him the site to click the button at
 
 
-@app.route('/otp_input.html')
+@app.route('/otp_input.html', methods=['GET', 'POST'])
 @app.route('/otp_input', methods=['GET', 'POST'])
 def otp_input():
     if request.method == 'POST': # if the methode is post, aka the form got filled
@@ -648,7 +650,7 @@ def otp_input():
                         subdomainname = subdomainname['subdomain']
 
                         dns_existing = nc.dns.get("freedomain.meme")
-                       "Invalid scrape target: %s", exc record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
+                        record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
                         ip = record.value if record else None
 
                         resp = make_response(render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip))
@@ -666,7 +668,7 @@ def otp_input():
             return render_template('otp_input.html', error="Your Password/IP dont Match...") #Password/Ip not matching
     return render_template('otp_input.html', error=-1) # sending the form
 
-@app.route('/verify_otp.html')
+@app.route('/verify_otp.html', methods=['GET', 'POST'])
 @app.route('/verify_otp', methods=['GET', 'POST'])
 def otp_verify_afther_creation():
     ip_addr = request.remote_addr # get, once again the ip
@@ -679,6 +681,7 @@ def otp_verify_afther_creation():
             return render_template("verify_otp.html",error=f"An Error Happend and your Directory cant be made. This is NOT supposed to happen. Please contact me and say your id is {userid}")
 
         return render_template("verify_otp.html", userid=userid) # returns the qr code to scan with the phone. then routes to /otp_input
+    return render_template("/login.html")
 
 @app.route('/make_domain', methods=['POST'])
 @app.route('/make_domain.html', methods=['POST'])
@@ -708,8 +711,8 @@ def homepage():
                 return render_template("home_loggedin.html", has_subdomain=1,subdomainname=f"{retourncode}.domainname", ip=ip_link)
     return render_template('home_loggedin.html', notLogged=1) # the session verify didnt worked 
 
-@app.route('/removedomain')
-@app.route('/removedomain.html') # removes a domain
+@app.route('/removedomain', methods=[ 'POST'])
+@app.route('/removedomain.html', methods=[ 'POST']) # removes a domain
 def remove():
     session = request.cookies.get('session')
     pw = request.cookies.get('pw')
@@ -727,8 +730,8 @@ def remove():
         return render_template('home_loggedin.html', notLogged=1) 
 
 
-@app.route('/deleteme')
-@app.route('/deleteme.html')
+@app.route('/deleteme', methods=['GET', 'POST'])
+@app.route('/deleteme.html', methods=['GET', 'POST'])
 def removeme():
     session = request.cookies.get('session')
     pw = request.cookies.get('pw')
@@ -749,7 +752,7 @@ def removeme():
 
 
 
-@app.route('/homepage')
+@app.route('/homepage', methods=['GET', 'POST'])
 @app.route('/homepage.html', methods=['GET', 'POST'])
 def homepagev2():
     session = request.cookies.get('session')
@@ -776,6 +779,17 @@ def homepagev2():
             return render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip)
     else:
         return render_template("login.html")
+
+
+@app.route('/support.html', methods=['GET', 'POST'])
+@app.route('/support', methods=['GET', 'POST'])
+def support():
+    return render_template("support.html")
+
+@app.errorhandler(404) 
+def handle_404(e):
+    return "Not Found", 404
+
 
 @app.errorhandler(Exception) # handels Errors from frontend/SQL
 def handle_all_errors(e):

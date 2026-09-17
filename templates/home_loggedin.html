@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>Freedomain</title>
 </head>
 <body>
     <h1>Welcome, Logged In User!</h1>
@@ -23,7 +23,7 @@
 
             {% if error ==-2 %}
                 <h1>Do NOT include ".freedomain.meme" in the field Below. Thanks!</h1>
-                <h4>If you didnt, Please make sure the subdomain is a Valid A level record! ANd that the IP is also valid!</h4>
+                <h4>If you didn't, please make sure the Subdomain is a Valid A level record! And that the IP is also valid!</h4>
             {% endif %}
 
             <input type="text" name="domainname" required>
@@ -46,13 +46,14 @@
         <h3>You got Limited by our Automated service.</h3>
     {% endif %}
     {% if error == -3%}
-        <h3>You got Limited by our Web scraper, as it belives you have not Bad Words on your website. If you belive, this is an error, contact Support.</h3>
+        <h3>You got Limited by our Web scraper, as it belives you have Bad Words on your website. If you belive, this is an error, </h3>
+        <a href="https://freedomain.meme/support.html">contact Support.</a>
     {% endif %}
     {% if error == -10%}
-        <h3>You got Limited by our Web scraper, as it Found no content. If you belive, this is an error or you "accidentally" registerd a dead ip, contact Support.</h3>
+        <h3>You got our Web scraper found no content on Your Page, this is Weird... A human will checkt this.</h3>
     {% endif %}
     {% if has_subdomain == 1 %}
-        <h3>Your Subdomain is Currently {{subdomainname}}.freedomain.meme!</h3>
+        <h3>Your Subdomain is Currently <a href="https://{{subdomainname}}.freedomain.meme">{{subdomainname}}.freedomain.meme</a>!</h3>
         <br>
         <h3>It is redirecting to {{ip}}</h3>
 

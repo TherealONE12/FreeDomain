@@ -2,7 +2,13 @@
 <html>
     <body>
         <h3>Setup your OTP now - You will need it to login again:</h3>
-        <br><br>
+        <h5>Please 
+            <a href="https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2&hl=en-US">Download Google Authenticator</a>
+        Or 
+            <a href="https://f-droid.org/packages/com.beemdevelopment.aegis/">Download Aegis</a>
+        Or other TOTP Apps onto your Smartphone and scan then the QR Code. A 6 digits Code should appear. Then, continue.
+        </h5>
+        <br>
         {% if error is not none %}
             <h4>{{error}}</h4>
         {% endif %}

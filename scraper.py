@@ -171,7 +171,7 @@ class WebCrawler:
 def start_thingy(url: str, amount: int):
 
     try:
-        crawler = WebCrawler([normalize_url(starting_urls)])
+        crawler = WebCrawler([normalize_url(url)])
     except ValueError as e:
         logging.warning("Invalid scrape target: %s", e)
         return None
