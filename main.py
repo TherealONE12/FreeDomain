@@ -3,11 +3,14 @@ from profanity_check import predict, predict_prob
 from namecheap.models import DNSRecord
 from namecheap import Namecheap
 from dotenv import load_dotenv
-from discord.ext import commands
+from discord.ext import commands, tasks
 from bs4 import BeautifulSoup
 from scraper import start_thingy
 from web_target import dns_target
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from contextlib import contextmanager
 import discord
 import pyotp
 import secrets
@@ -28,7 +31,11 @@ import ipaddress, re
 # Setup stuff
 load_dotenv()
 nc = Namecheap()
-domains = nc.domains.check("freedomain.meme")
+try:
+    domains = nc.domains.check("freedomain.meme")
+except:
+    send_log("NAMECHEAP BASE CONNECT FAILED! (Namecheap Down??)", 3)
+
 for domain in domains:
     if domain.available:
         print(f"Domain {domain.domain} is available!")
@@ -39,7 +46,12 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='$', intents=intents)
 
 app = Flask(__name__)
-
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 DB_PATH = "app.db"
@@ -47,30 +59,39 @@ DB_PATH = "app.db"
 #Database shema. 
 DB_SHEMA = """
 PRAGMA foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS users(
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     hash_secret    TEXT NOT NULL,
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_restricted   INTEGER NOT NULL DEFAULT 0,
-    ip_address TEXT NOT NULL
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_restricted  INTEGER NOT NULL DEFAULT 0,
+    ip_address     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS user_2fa(
-    id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     totp_secret    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS subdomains(
-    id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    subdomain   TEXT DEFAULT -1,
-    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    subdomain      TEXT NOT NULL DEFAULT '-1',
+    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip             TEXT
 );
 
 CREATE TABLE IF NOT EXISTS session(
-    id      INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     session_key    TEXT NOT NULL,
     updated_at     TIMESTAMP
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_hash
+    ON users(hash_secret);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subdomains_name
+    ON subdomains(subdomain COLLATE NOCASE)
+    WHERE subdomain != '-1';
 """
 
 # All discord helper funktions are below
@@ -174,7 +195,7 @@ def send_ban(userid: int, domainname: str, ip:str, reason:str): # Notifies of Ba
     
     embed1 = discord.Embed(
       title= "Banned",
-      description= f"Banned UserId {userid} with old domainname {domainname} and redirect-ip of {ip}. Reason: {reason}",
+      description= f"Banned UserId {userid} with old domainname {domainname} and redirect-ip of {ip}. Reason: {reason}. Please check this out!",
       color= 15469837,
     )
 
@@ -193,22 +214,34 @@ def send_ban(userid: int, domainname: str, ip:str, reason:str): # Notifies of Ba
 
 
 # All website helper funktions are below. 
-
-def get_conn() -> sqlite3.Connection: # gets an databank connection going 
-    conn = sqlite3.connect(DB_PATH)   
+@contextmanager # Allows to hop back to here to conn.close on OK using yield conn 
+def get_conn(): # gets an databank connection going 
+    conn = sqlite3.connect(DB_PATH, timeout=30)# Also wait a maximum of 30s for an active connection instead of crashing.
     conn.execute("PRAGMA foreign_keys = ON")   # Testing queries for errors, I belive
     conn.row_factory = sqlite3.Row      # Allows for row-specific acsesss       
-    return conn
+    
+    try:
+        with conn:
+            yield conn # send it to the get_conn()
+    finally:
+        conn.close() # if get_conn() finished, close it
 
 
 def init_db(): #Initialises the db
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.close()
     with get_conn() as conn:
-        conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(DB_SHEMA)
         send_log("Initialised the DB!", 4)
         
 
 def setup_otp(userid: int):
+    with get_conn() as conn:
+        row = conn.execute("SELECT totp_secret FROM user_2fa WHERE id = ?", (userid,))
+        if row['totp_secret'] is None:
+            return -2
+
     key = pyotp.random_base32() #Generate an OTP secret key
     totp_auth = pyotp.totp.TOTP(key).provisioning_uri(name=str(userid), issuer_name="FreeDomain.meme") # generates the pair for the user to import as link
 
@@ -263,10 +296,15 @@ def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the user
         row = conn.execute("SELECT * FROM users WHERE hash_secret = ?", (hash_pw,)).fetchone() # checking if that password exists
         conn.commit()
 
+        if row['ip_adress'] is None:
+            return -1
+        
+
+
         if row['ip_address'] != ip_addr:
             send_log(f"User {row['id']} Logged in from {ip_addr}, but Originates from {row['ip_addr']}", 4)
 
-        if row == None: #if not, then deny acsess
+        if row['is_restricted'] == None or row['id'] == None: #if not, then deny acsess
             return -1
         elif row['is_restricted'] == 1:# If the account is restricted, also deny acsess (What did u do??)
             return -1
@@ -293,8 +331,13 @@ def verify(id: int, session: str): # Usexd to verify the sessiontoken. Idk why I
         return 1
 
 def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a domain
+    subdomainname = subdomainname.lower()
+
     if "freedomain.meme" in subdomainname: # checks if the main domain is in the subdomain. if so, then DENY the request.
         return -2
+
+    if "www" in subdomainname: # checks if www is in the subdomain. if so, then DENY the request.
+        return -8
 
     if not re.fullmatch(r'[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?', subdomainname):# check if subdomainname is valid
         return -2
@@ -337,27 +380,10 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                     record = DNSRecord(name=subdomainname, type=record_type, value=dns_value, ttl=1799) # make the record
                     nc.dns.add("freedomain.meme",record) # and write it to the namecheap servers
 
-                    results = start_thingy(scrape_url, 25)
-        
-                    if results is None:
-                        # nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip)
-                        send_log(f"Manual Verify needed for {subdomainname} ({ip})", 3)
-                        return -10
-
-                    send_log(f"Scraped Website {ip}, found top 25 Words to be: {results}", 4)
-
-                    for result in results:
-                        predicted = predict_prob([result])
-                        if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
-                            with get_conn() as conn:
-                                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
-                                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
-                                send_ban(id, subdomainname, ip, "Banned by Auto-Scraper-Badword Filter.")
-                                return -3
-
+                    send_log(f"Manual Verify needed for {subdomainname} ({ip})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
-                        conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,subdomainname)).fetchone() # current subdomain
+                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain, ip = excluded.ip", (id,subdomainname,dns_value)).fetchone() # current subdomain
                     send_log(f"User {id} made an Domain named {subdomainname}.freedomain.meme at {time.time()} with link to {ip}!", 1)
                     return 0 # all good
                 else:
@@ -367,26 +393,8 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                 if subdomain_state is None or str(subdomain_state['subdomain']) == "-1":
                     record = DNSRecord(name=newdomain, type="A", value=ip, ttl=1799) # make the record and ship it to the servers. same as above
                     nc.dns.add("freedomain.meme",record)
-                    
-                    sleep(60)
 
-                    results = start_thingy(scrape_url, 25)
-        
-                    if results is None:
-                        # nc.dns.delete(domain="freedomain.meme", name=newdomain, record_type="A", value=ip)
-                        send_log(f"Manual Verify needed for {newdomain} ({ip})", 3)
-                        return -10
-
-                    send_log(f"Scraped Website {ip}, found top 25 Words to be: {results}", 4)
-
-                    for result in results:
-                        predicted = predict_prob([result])
-                        if predicted[0] > 0.5: # If yes (i hope 0.5 is big enought for not so many false-positives)
-                            with get_conn() as conn:
-                                conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, id))
-                                conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
-                                send_ban(id, subdomainname, ip, "Banned by Auto-Scraper-Badword Filter.")
-                                return -3
+                    send_log(f"Manual Verify needed for {newdomain} ({ip})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
                         conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,newdomain)).fetchone() # current subdomain
@@ -403,24 +411,64 @@ def removeDomainUser(userid:int): # removes The domain from an User
         subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (userid,)).fetchone()
 
 
-        if subdomainname is None: # if he hasnt none, then jsut render none
+        if subdomainname is None or subdomainname['subdomain'] == -1: # if he hasnt none, then jsut render none
             return render_template('home_loggedin.html', has_subdomain=0)
 
         subdomainname = subdomainname['subdomain'] # gets the name
 
-        dns_existing = nc.dns.get("freedomain.meme") # gets the existing stuff
-        record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A") # and extracts his details
-        ip = record.value if record else None # gets his ip
+        ip = conn.execute("SELECT ip FROM subdomains WHERE id = ?", (userid,)).fetchone()
+
+
+        if ip is None: # if he hasnt none, then jsut render none
+            return render_template('home_loggedin.html', has_subdomain=0)
+
+        ip = ip['ip'] # gets the name
 
     
         nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip) # delets his stuff
 
-        conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid)) # uopdates the db
+        conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid)) # updates the db
         conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
+        conn.execute("UPDATE subdomains SET ip = ? WHERE id = ?", (None, userid))
         conn.commit() 
     send_log(f"User {userid} removed His Subdomain!", 4) # and sends a log to me
 
     
+def IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite():
+    scrape_url = [] # put all urls in there
+    with get_conn() as conn:
+        scrape_url = conn.execute("SELECT subdomain FROM subdomains WHERE subdomain != '-1'").fetchall() #fetch all of the users domains
+    
+    for cur_scrape_url in scrape_url:
+        words = start_thingy(f"{cur_scrape_url[subdomain]}.freedomain.meme", 50) # start tha scraper
+
+        if words == None:
+            send_log(f"Couldn't Scrape {cur_scrape_url[subdomain]} because The scraper Didnt Find anything or crashed", 2) # send log
+        else:
+            predicted = predict_prob(words) # predict the harmfullness
+
+            if predicted is None:
+                send_log(f"Couldn't Predict {cur_scrape_url[subdomain]} because predict_prob Failed with words {words}", 2) # Should never trigger
+                continue
+
+            if max(predicted) < 0.5:
+                continue
+
+
+            for predictedsing in predicted:
+                if predictedsing > 0.5: # checkst the liklyhood of an bad site
+                    with get_conn() as conn:
+                        idrow = conn.execute("SELECT *  FROM subdomains WHERE subdomain = ?", (cur_scrape_url[subdomain],)).fetchone() # get the id
+
+                        id = idrow['id']
+                        
+                        dns_existing = nc.dns.get("freedomain.meme") # gets the existing stuff
+                        record = next(r for r in dns_existing if r.name == cur_scrape_url[subdomain] and r.type == "A") # and extracts his details
+                        ip = record.value if record else None # gets his ip
+                        
+                        conn.execute("UPDATE users SET is_restricted = 1 WHERE id = ?", (id,)) # and bans him
+
+                        nc.dns.delete(name=cur_scrape_url[subdomain], domain="freedomain.meme", record_type="A", value=ip) # also deletes the domain
 
 
 # All discord routes are below
@@ -440,6 +488,7 @@ async def ban(ctx, userid, reason):
     msgid = int(author.id)
 
     if msgid == 918216902885670982:
+        removeDomainUser(userid)
         with get_conn() as conn:
                 conn.execute("UPDATE users SET is_restricted = ? WHERE id = ?", (1, userid))
                 conn.commit() # LINE ABOVE: Set his restricted status to 1, and basacly banning him away from the plattform, though if false-positive then allowing him back on afther human review
@@ -450,7 +499,7 @@ async def ban(ctx, userid, reason):
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 @bot.command()
-async def unbanKeepDomain(ctx, userid, reason): # Unbans a Usser and keeps his domain
+async def unbanKeepDomain(ctx, userid, reason): # Unbans a Usser and keeps his domain maybe
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -470,8 +519,10 @@ async def whipe(ctx, userid, reason): # whipes a user
     msgid = int(author.id)
 
     if msgid == 918216902885670982:
+        removeDomainUser(userid)
         with get_conn() as conn:
                 conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid))
+                conn.execute("UPDATE subdomains SET ip = ? WHERE id = ?", (None, userid))
                 conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
                 conn.commit() 
                 send_log(reason, 1)
@@ -486,6 +537,7 @@ async def deleteUserCompetly(ctx, userid, reason): # deletes a user from the pla
     msgid = int(author.id)
 
     if msgid == 918216902885670982:
+        removeDomainUser(userid)
         with get_conn() as conn:
                 conn.execute("DELETE FROM users WHERE id = ?", (userid,))
                 conn.commit() 
@@ -498,7 +550,7 @@ async def deleteUserCompetly(ctx, userid, reason): # deletes a user from the pla
 
 
 @bot.command()
-async def list(ctx): # lists all users
+async def listAllUsr(ctx): # lists all users
     author = ctx.message.author
     msgid = int(author.id)
 
@@ -510,7 +562,7 @@ async def list(ctx): # lists all users
         text = "\n".join(f"{row['id']} | {row['ip_address']} | restricted={row['is_restricted']}" for row in collum)
         await ctx.send(text or "No Users Found...")
     else:
-        send_log(f"Discord User with Id = {msgid} tried to List All Users!")
+        send_log(f"Discord User with Id = {msgid} tried to List All Users!",1)
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 @bot.command()
@@ -522,17 +574,17 @@ async def getInfo(ctx, uid): # get Info about a specific user
 
         with get_conn() as conn:
             collum = conn.execute("SELECT id, created_at, is_restricted, ip_address FROM users WHERE id = ?", (uid,)).fetchone()
-            collum2 = conn.execute("SELECT subdomain, updated_at FROM subdomains WHERE id = ?", (uid,)).fetchone()
+            collum2 = conn.execute("SELECT subdomain, ip, updated_at FROM subdomains WHERE id = ?", (uid,)).fetchone()
             collum3 = conn.execute("SELECT updated_at FROM session WHERE id = ?", (uid,)).fetchone()
 
             if collum is None:
                 await ctx.send(f"No Info Found for User {uid}")
                 return -1
 
-            text = f"Data Found:\nUser : {collum['id']} | {collum['ip_address']} | restricted={collum['is_restricted']}\nUser : {collum['id']} | Current Subdomain: {collum2['subdomain'] if collum2 else 'None'} | Last Subdomain Update: {collum2['updated_at'] if collum2 else 'N/A'}\nUser : {collum['id']} |Last Session : {collum3['updated_at'] if collum3 else 'N/A'}"
+            text = f"Data Found:\nUser : {collum['id']} | {collum['ip_address']} | restricted={collum['is_restricted']}\nUser : {collum['id']} | Current Subdomain: {collum2['subdomain'] if collum2 else 'None'} | Current SUbdomain Forward IP: {collum2['ip'] if collum2 else 'None'} | Last Subdomain Update: {collum2['updated_at'] if collum2 else 'N/A'}\nUser : {collum['id']} |Last Session : {collum3['updated_at'] if collum3 else 'N/A'}"
             await ctx.send(text or f"No Info Found for User {uid}")
     else:
-        send_log(f"Discord User with Id = {msgid} tried to List All Users!")
+        send_log(f"Discord User with Id = {msgid} tried to List All Users!",1)
         await ctx.send(f"404 Unauthorised. (U sure you are the Admin/On the right Account?)")
 
 
@@ -558,6 +610,7 @@ def ping():
 
 @app.route('/login.html', methods=['GET', 'POST'])
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("25 per hour")
 def login():
     if request.method == 'POST': # if post (aka the form got filled)
         password = request.form['auth_code'] # extract the password
@@ -579,6 +632,7 @@ def login():
 
 @app.route('/register.html', methods=['GET', 'POST'])
 @app.route('/register', methods=['GET', 'POST'])
+@limiter.limit("25 per hour")
 def register():
     if request.method == 'POST': # if the form got send
         ip_addr = request.remote_addr # extract ip adress
@@ -615,6 +669,7 @@ def register():
 
 @app.route('/otp_input.html', methods=['GET', 'POST'])
 @app.route('/otp_input', methods=['GET', 'POST'])
+@limiter.limit("25 per hour")
 def otp_input():
     if request.method == 'POST': # if the methode is post, aka the form got filled
         otp = request.form['otp'] # extract the otp
@@ -622,6 +677,18 @@ def otp_input():
         password = request.cookies.get('pw') # get the password
         if VerifyUser(password=password, ip_addr=ip_addr) >= 0: # if the password/ip match, then ...
             key = -1
+
+            try: 
+                os.remove(f"static/qr/{VerifyUser(password=password, ip_addr=ip_addr)}/qr_auth.png") # delets a
+            except OSError as error: # If an error happens
+                send_log(f"{userid} Tried to remove the totp qr - Didnt work!", 2)
+                return -1 # file cant be deleted. Send help
+
+            try: 
+                os.rmdir(f"static/qr/{VerifyUser(password=password, ip_addr=ip_addr)}") # delets a
+            except OSError as error: # If an error happens
+                send_log(f"{userid} Tried to remove the totp dir - Didnt work!", 2)
+                return -1 # dir cant be deleted. Send help
 
             with get_conn() as conn:
                 key = conn.execute("SELECT * FROM user_2fa WHERE id = ?", (VerifyUser(password=password, ip_addr=ip_addr),)).fetchone() #get the otp passkey secret key
@@ -670,6 +737,7 @@ def otp_input():
 
 @app.route('/verify_otp.html', methods=['GET', 'POST'])
 @app.route('/verify_otp', methods=['GET', 'POST'])
+@limiter.limit("25 per hour")
 def otp_verify_afther_creation():
     ip_addr = request.remote_addr # get, once again the ip
     password = request.cookies.get('pw') # and gets the pw
@@ -679,6 +747,9 @@ def otp_verify_afther_creation():
 
         if ret == -1: # If an error happens
             return render_template("verify_otp.html",error=f"An Error Happend and your Directory cant be made. This is NOT supposed to happen. Please contact me and say your id is {userid}")
+
+        if ret == -2:
+            return render_template("failure.html", error="You Have already OTP Setup! Please login instead of making a new Account.")
 
         return render_template("verify_otp.html", userid=userid) # returns the qr code to scan with the phone. then routes to /otp_input
     return render_template("/login.html")
@@ -704,7 +775,9 @@ def homepage():
             elif retourncode == -3: # if the user got banned by web scraper
                 return render_template("home_loggedin.html",error=-3, has_subdomain=0, ban_create=1)
             elif retourncode == -10: # Nothing found Words
-                return render_template("home_loggedin.html",error=-10, has_subdomain=0, ban_create=1)
+                return render_template("home_loggedin.html",error=-10, has_subdomain=0, ban_create=0)
+            elif retourncode == -8: # tried www
+                return render_template("home_loggedin.html",error=-8, has_subdomain=0, ban_create=0)
             elif retourncode == 0:
                 return render_template('home_loggedin.html', has_subdomain=1, sucsess_create=1, subdomainname=domainname, ip=ip_link) # everything worked
             else:
@@ -730,8 +803,8 @@ def remove():
         return render_template('home_loggedin.html', notLogged=1) 
 
 
-@app.route('/deleteme', methods=['GET', 'POST'])
-@app.route('/deleteme.html', methods=['GET', 'POST'])
+@app.route('/deleteme', methods=['POST'])
+@app.route('/deleteme.html', methods=['POST'])
 def removeme():
     session = request.cookies.get('session')
     pw = request.cookies.get('pw')
@@ -741,14 +814,17 @@ def removeme():
     id = VerifyUser(pw, ip_addr)
 
     if id > 0:
-        removeDomainUser(id)
-        with get_conn() as conn:
-            conn.execute("DELETE FROM users WHERE id = ?", (id,))
-            conn.commit() 
-            send_log(f"Deleted {userid} completly as of His wish!!", 4)
-            return "Okay Bye! Thanks for being part of this journey!"
+        if verify(id, session) == 1:
+            removeDomainUser(id)
+            with get_conn() as conn:
+                conn.execute("DELETE FROM users WHERE id = ?", (id,))
+                conn.commit() 
+                send_log(f"Deleted {userid} completly as of His wish!!", 4)
+                return "Okay Bye! Thanks for being part of this journey!"
+        else:
+            return "Whoops, you are not Authenticated"
     else:
-        return -1
+        return "Whoops, you are not Authenticated"
 
 
 
@@ -765,16 +841,16 @@ def homepagev2():
     if verify(VerifyUser(pw, ip_addr), session) == 1:
         with get_conn() as conn:
             subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
+            ip = conn.execute("SELECT ip FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
 
-
-            if subdomainname is None:
+            if subdomainname is None or subdomainname['subdomain'] == -1:
                 return render_template('home_loggedin.html', has_subdomain=0)
 
+            if ip is None:
+                return render_template('home_loggedin.html', has_subdomain=0)
+            
             subdomainname = subdomainname['subdomain']
-
-            dns_existing = nc.dns.get("freedomain.meme")
-            record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
-            ip = record.value if record else None
+            ip = ip['ip']
 
             return render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip)
     else:

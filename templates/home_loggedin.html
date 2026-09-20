@@ -52,6 +52,10 @@
     {% if error == -10%}
         <h3>You got our Web scraper found no content on Your Page, this is Weird... A human will checkt this.</h3>
     {% endif %}
+
+    {% if error == -8%}
+        <h3>Please don't make www to your subdomain. We will (maybe) use it (someday) Thanks</h3>
+    {% endif %}
     {% if has_subdomain == 1 %}
         <h3>Your Subdomain is Currently <a href="https://{{subdomainname}}.freedomain.meme">{{subdomainname}}.freedomain.meme</a>!</h3>
         <br>
