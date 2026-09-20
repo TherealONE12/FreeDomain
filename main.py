@@ -470,6 +470,14 @@ def IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite():
 
                         nc.dns.delete(name=cur_scrape_url[subdomain], domain="freedomain.meme", record_type="A", value=ip) # also deletes the domain
 
+def scrape_loop():
+    while true:
+        time.sleep(60*60*6)
+        try:
+            IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite()
+        except Exception as e:
+            send_log(f"Scrape Loop crashed! Error: {e!r}", 3)
+
 
 # All discord routes are below
 
@@ -885,5 +893,7 @@ if __name__ == '__main__': # runs the whole stuff
 
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-
+    
+    threading.Thread(target=scrape_job_loop, daemon=True).start()
+    
     app.run()
