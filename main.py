@@ -11,6 +11,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from contextlib import contextmanager
+from werkzeug.exceptions import HTTPException
 import discord
 import pyotp
 import secrets
@@ -33,12 +34,12 @@ load_dotenv()
 nc = Namecheap()
 try:
     domains = nc.domains.check("freedomain.meme")
-except:
-    send_log("NAMECHEAP BASE CONNECT FAILED! (Namecheap Down??)", 3)
-
-for domain in domains:
+    for domain in domains:
     if domain.available:
         print(f"Domain {domain.domain} is available!")
+except:
+    print("Namecheap Down?")
+
 #DC setup
 intents = discord.Intents.default()
 intents.message_content = True
@@ -238,7 +239,7 @@ def init_db(): #Initialises the db
 
 def setup_otp(userid: int):
     with get_conn() as conn:
-        row = conn.execute("SELECT totp_secret FROM user_2fa WHERE id = ?", (userid,))
+        row = conn.execute("SELECT totp_secret FROM user_2fa WHERE id = ?", (userid,)).fetchone()
         if row['totp_secret'] is None:
             return -2
 
@@ -296,13 +297,14 @@ def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the user
         row = conn.execute("SELECT * FROM users WHERE hash_secret = ?", (hash_pw,)).fetchone() # checking if that password exists
         conn.commit()
 
-        if row['ip_adress'] is None:
+        if row is None:
+            return -1
+
+        if row['ip_address'] is None:
             return -1
         
-
-
         if row['ip_address'] != ip_addr:
-            send_log(f"User {row['id']} Logged in from {ip_addr}, but Originates from {row['ip_addr']}", 4)
+            send_log(f"User {row['id']} Logged in from {ip_addr}, but Originates from {row['ip_address']}", 4)
 
         if row['is_restricted'] == None or row['id'] == None: #if not, then deny acsess
             return -1
@@ -314,12 +316,14 @@ def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the user
 
 
 
-
 def verify(id: int, session: str): # Usexd to verify the sessiontoken. Idk why I thought i needed a second verification progress, but hey, now we are here
     age = -1
     restricted = -1
     with get_conn() as conn:
         mimimi = conn.execute("SELECT * FROM session WHERE id = ?", (id,)).fetchone() # fetched the age
+
+        if mimimi is None:
+            return -2
 
         age = mimimi['updated_at'] # why mimimi? Because If YoU PuLL aN InTeGeR FrOm SQlIte YoU sTiLl gEt aN sQLitE RoW NoT aN iNt VaR
 
@@ -380,10 +384,10 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                     record = DNSRecord(name=subdomainname, type=record_type, value=dns_value, ttl=1799) # make the record
                     nc.dns.add("freedomain.meme",record) # and write it to the namecheap servers
 
-                    send_log(f"Manual Verify needed for {subdomainname} ({ip})", 3)
+                    send_log(f"Manual Verify needed for {subdomainname} ({dns_value})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
-                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain, ip = excluded.ip", (id,subdomainname,dns_value)).fetchone() # current subdomain
+                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain, ip = excluded.ip", (id,subdomainname,dns_value)).fetchone() # current subdomain
                     send_log(f"User {id} made an Domain named {subdomainname}.freedomain.meme at {time.time()} with link to {ip}!", 1)
                     return 0 # all good
                 else:
@@ -391,14 +395,14 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
             else:
                 newdomain = f"{append}.{subdomainname}" # appending the prefix
                 if subdomain_state is None or str(subdomain_state['subdomain']) == "-1":
-                    record = DNSRecord(name=newdomain, type="A", value=ip, ttl=1799) # make the record and ship it to the servers. same as above
+                    record = DNSRecord(name=newdomain, type="A", value=dns_value, ttl=1799) # make the record and ship it to the servers. same as above
                     nc.dns.add("freedomain.meme",record)
 
-                    send_log(f"Manual Verify needed for {newdomain} ({ip})", 3)
+                    send_log(f"Manual Verify needed for {newdomain} ({dns_value})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
-                        conn.execute("INSERT INTO subdomains (id, subdomain) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,newdomain)).fetchone() # current subdomain
-                    send_log(f"User {id} made an Domain named {newdomain}.freedomain.meme at {time.time()} with link to {ip}!", 1)
+                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,newdomain,dns_value)).fetchone() # current subdomain
+                    send_log(f"User {id} made an Domain named {newdomain}.freedomain.meme at {time.time()} with link to {dns_value}!", 1)
                     return append # different return to let the user know
                 else:
                     return -1
@@ -411,8 +415,8 @@ def removeDomainUser(userid:int): # removes The domain from an User
         subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (userid,)).fetchone()
 
 
-        if subdomainname is None or subdomainname['subdomain'] == -1: # if he hasnt none, then jsut render none
-            return render_template('home_loggedin.html', has_subdomain=0)
+        if subdomainname is None or subdomainname['subdomain'] == str(-1): # if he hasnt none, then jsut render none
+            return -1
 
         subdomainname = subdomainname['subdomain'] # gets the name
 
@@ -420,7 +424,7 @@ def removeDomainUser(userid:int): # removes The domain from an User
 
 
         if ip is None: # if he hasnt none, then jsut render none
-            return render_template('home_loggedin.html', has_subdomain=0)
+            return -1
 
         ip = ip['ip'] # gets the name
 
@@ -688,9 +692,8 @@ def otp_input():
 
             try: 
                 os.remove(f"static/qr/{VerifyUser(password=password, ip_addr=ip_addr)}/qr_auth.png") # delets a
-            except OSError as error: # If an error happens
-                send_log(f"{userid} Tried to remove the totp qr - Didnt work!", 2)
-                return -1 # file cant be deleted. Send help
+            except OSError as error: # If an error happens (AKA the path got already deleted)
+
 
             try: 
                 os.rmdir(f"static/qr/{VerifyUser(password=password, ip_addr=ip_addr)}") # delets a
@@ -789,7 +792,7 @@ def homepage():
             elif retourncode == 0:
                 return render_template('home_loggedin.html', has_subdomain=1, sucsess_create=1, subdomainname=domainname, ip=ip_link) # everything worked
             else:
-                return render_template("home_loggedin.html", has_subdomain=1,subdomainname=f"{retourncode}.domainname", ip=ip_link)
+                return render_template("home_loggedin.html", has_subdomain=1,subdomainname=f"{retourncode}.{domainname}", ip=ip_link)
     return render_template('home_loggedin.html', notLogged=1) # the session verify didnt worked 
 
 @app.route('/removedomain', methods=[ 'POST'])
@@ -827,7 +830,7 @@ def removeme():
             with get_conn() as conn:
                 conn.execute("DELETE FROM users WHERE id = ?", (id,))
                 conn.commit() 
-                send_log(f"Deleted {userid} completly as of His wish!!", 4)
+                send_log(f"Deleted {id} completly as of His wish!!", 4)
                 return "Okay Bye! Thanks for being part of this journey!"
         else:
             return "Whoops, you are not Authenticated"
@@ -851,7 +854,7 @@ def homepagev2():
             subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
             ip = conn.execute("SELECT ip FROM subdomains WHERE id = ?", (VerifyUser(pw, ip_addr),)).fetchone()
 
-            if subdomainname is None or subdomainname['subdomain'] == -1:
+            if subdomainname is None or subdomainname['subdomain'] == str(-1):
                 return render_template('home_loggedin.html', has_subdomain=0)
 
             if ip is None:
@@ -877,6 +880,9 @@ def handle_404(e):
 
 @app.errorhandler(Exception) # handels Errors from frontend/SQL
 def handle_all_errors(e):
+    if isinstance(e, HTTPException):
+        return e
+
     import traceback
     tb = traceback.format_exc()
     
@@ -893,7 +899,7 @@ if __name__ == '__main__': # runs the whole stuff
 
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
-    
-    threading.Thread(target=scrape_job_loop, daemon=True).start()
-    
+
+    threading.Thread(target=scrape_loop, daemon=True).start()
+
     app.run()
