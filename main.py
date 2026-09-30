@@ -240,7 +240,7 @@ def init_db(): #Initialises the db
 def setup_otp(userid: int):
     with get_conn() as conn:
         row = conn.execute("SELECT totp_secret FROM user_2fa WHERE id = ?", (userid,)).fetchone()
-        if row['totp_secret'] is None:
+        if row is not None and row['totp_secret'] is not None:
             return -2
 
     key = pyotp.random_base32() #Generate an OTP secret key
