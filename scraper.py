@@ -138,7 +138,7 @@ class WebCrawler:
                 logging.warning(f"Parser error: {url} - {e}")
                 continue
 
-            for element in soup(['skript', 'style', 'noskript']):
+            for element in soup(['script', 'style', 'noscript']):
                 element.decompose()
             text = soup.get_text()
             words = re.findall(r"[a-zA-Z]+", text)

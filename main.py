@@ -35,8 +35,8 @@ nc = Namecheap()
 try:
     domains = nc.domains.check("freedomain.meme")
     for domain in domains:
-    if domain.available:
-        print(f"Domain {domain.domain} is available!")
+        if domain.available:
+            print(f"Domain {domain.domain} is available!")
 except:
     print("Namecheap Down?")
 
@@ -57,8 +57,8 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 DB_PATH = "app.db"
 
-#Database shema. 
-DB_SHEMA = """
+#Database schema.
+DB_SCHEMA = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users(
@@ -233,7 +233,7 @@ def init_db(): #Initialises the db
     conn.execute("PRAGMA journal_mode=WAL")
     conn.close()
     with get_conn() as conn:
-        conn.executescript(DB_SHEMA)
+        conn.executescript(DB_SCHEMA)
         send_log("Initialised the DB!", 4)
         
 
@@ -289,7 +289,7 @@ def MakeNewUser(ipadress: str) -> str:
 
 
 def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the userid, lol. Uses only the password
-    if password == None: # afther 30  mins the cookie runs out and gets deleted, so the user needs to login again, but without this the line afther the if staement just throws an error into the users face.
+    if password is None: # afther 30  mins the cookie runs out and gets deleted, so the user needs to login again, but without this the line afther the if staement just throws an error into the users face.
         return -2
 
     hash_pw = hashlib.sha256(password.encode()).hexdigest() # hashing the supposed right password that we got
@@ -306,7 +306,7 @@ def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the user
         if row['ip_address'] != ip_addr:
             send_log(f"User {row['id']} Logged in from {ip_addr}, but Originates from {row['ip_address']}", 4)
 
-        if row['is_restricted'] == None or row['id'] == None: #if not, then deny acsess
+        if row['is_restricted'] is None or row['id'] is None: #if not, then deny acsess
             return -1
         elif row['is_restricted'] == 1:# If the account is restricted, also deny acsess (What did u do??)
             return -1
@@ -444,15 +444,15 @@ def IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite():
         scrape_url = conn.execute("SELECT subdomain FROM subdomains WHERE subdomain != '-1'").fetchall() #fetch all of the users domains
     
     for cur_scrape_url in scrape_url:
-        words = start_thingy(f"{cur_scrape_url[subdomain]}.freedomain.meme", 50) # start tha scraper
+        words = start_thingy(f"{cur_scrape_url['subdomain']}.freedomain.meme", 50) # start tha scraper
 
-        if words == None:
-            send_log(f"Couldn't Scrape {cur_scrape_url[subdomain]} because The scraper Didnt Find anything or crashed", 2) # send log
+        if words is None:
+            send_log(f"Couldn't Scrape {cur_scrape_url['subdomain']} because The scraper Didnt Find anything or crashed", 2) # send log
         else:
             predicted = predict_prob(words) # predict the harmfullness
 
             if predicted is None:
-                send_log(f"Couldn't Predict {cur_scrape_url[subdomain]} because predict_prob Failed with words {words}", 2) # Should never trigger
+                send_log(f"Couldn't Predict {cur_scrape_url['subdomain']} because predict_prob Failed with words {words}", 2) # Should never trigger
                 continue
 
             if max(predicted) < 0.5:
@@ -462,20 +462,20 @@ def IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite():
             for predictedsing in predicted:
                 if predictedsing > 0.5: # checkst the liklyhood of an bad site
                     with get_conn() as conn:
-                        idrow = conn.execute("SELECT *  FROM subdomains WHERE subdomain = ?", (cur_scrape_url[subdomain],)).fetchone() # get the id
+                        idrow = conn.execute("SELECT *  FROM subdomains WHERE subdomain = ?", (cur_scrape_url['subdomain'],)).fetchone() # get the id
 
                         id = idrow['id']
-                        
+
                         dns_existing = nc.dns.get("freedomain.meme") # gets the existing stuff
-                        record = next(r for r in dns_existing if r.name == cur_scrape_url[subdomain] and r.type == "A") # and extracts his details
+                        record = next(r for r in dns_existing if r.name == cur_scrape_url['subdomain'] and r.type == "A") # and extracts his details
                         ip = record.value if record else None # gets his ip
-                        
+
                         conn.execute("UPDATE users SET is_restricted = 1 WHERE id = ?", (id,)) # and bans him
 
-                        nc.dns.delete(name=cur_scrape_url[subdomain], domain="freedomain.meme", record_type="A", value=ip) # also deletes the domain
+                        nc.dns.delete(name=cur_scrape_url['subdomain'], domain="freedomain.meme", record_type="A", value=ip) # also deletes the domain
 
 def scrape_loop():
-    while true:
+    while True:
         time.sleep(60*60*6)
         try:
             IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite()
@@ -687,22 +687,23 @@ def otp_input():
         otp = request.form['otp'] # extract the otp
         ip_addr = request.remote_addr # extract the ip adrress
         password = request.cookies.get('pw') # get the password
-        if VerifyUser(password=password, ip_addr=ip_addr) >= 0: # if the password/ip match, then ...
+        userid = VerifyUser(password=password, ip_addr=ip_addr)
+        if userid >= 0: # if the password/ip match, then ...
             key = -1
 
-            try: 
-                os.remove(f"static/qr/{VerifyUser(password=password, ip_addr=ip_addr)}/qr_auth.png") # delets a
+            try:
+                os.remove(f"static/qr/{userid}/qr_auth.png") # delets a
             except OSError as error: # If an error happens (AKA the path got already deleted)
+                pass
 
-
-            try: 
-                os.rmdir(f"static/qr/{VerifyUser(password=password, ip_addr=ip_addr)}") # delets a
+            try:
+                os.rmdir(f"static/qr/{userid}") # delets a
             except OSError as error: # If an error happens
                 send_log(f"{userid} Tried to remove the totp dir - Didnt work!", 2)
                 return -1 # dir cant be deleted. Send help
 
             with get_conn() as conn:
-                key = conn.execute("SELECT * FROM user_2fa WHERE id = ?", (VerifyUser(password=password, ip_addr=ip_addr),)).fetchone() #get the otp passkey secret key
+                key = conn.execute("SELECT * FROM user_2fa WHERE id = ?", (userid,)).fetchone() #get the otp passkey secret key
 
             if key is None:
                 return render_template("failure.html", reason="There was an error with the SQLite Query at otp_input!") # check if the key got changed to the coll
@@ -713,12 +714,11 @@ def otp_input():
 
                 session_id = secrets.token_urlsafe(96)
 
-                userid = VerifyUser(password, ip_addr) # get the user id
                 with get_conn() as conn:
                     conn.execute("INSERT INTO session (id, session_key, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET session_key = excluded.session_key, updated_at = excluded.updated_at",(userid, session_id, time.time()))
                     #LINE ABOVE: insert into the session the userid and session key, if the userid already exists (wich it does) it updates the session field instead of crashing
-                
-                    subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (VerifyUser(password, ip_addr),)).fetchone()
+
+                    subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (userid,)).fetchone()
                     
                     
                     
