@@ -700,7 +700,7 @@ def otp_input():
                 os.rmdir(f"static/qr/{userid}") # delets a
             except OSError as error: # If an error happens
                 send_log(f"{userid} Tried to remove the totp dir - Didnt work!", 2)
-                return -1 # dir cant be deleted. Send help
+                pass # Directory deletion failed, but continue anyway
 
             with get_conn() as conn:
                 key = conn.execute("SELECT * FROM user_2fa WHERE id = ?", (userid,)).fetchone() #get the otp passkey secret key
@@ -728,7 +728,7 @@ def otp_input():
                         subdomainname = subdomainname['subdomain']
 
                         dns_existing = nc.dns.get("freedomain.meme")
-                        record = next(r for r in dns_existing if r.name == subdomainname and r.type == "A")
+                        record = next((r for r in dns_existing if r.name == subdomainname and r.type == "A"), None)
                         ip = record.value if record else None
 
                         resp = make_response(render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip))
