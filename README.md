@@ -1,27 +1,25 @@
 # FreeDomain.meme 🌐
 
-A free subdomain hosting service that provides easy-to-remember domains for your services, with built-in protection against malicious domain names and harmful websites.
+A free subdomain hosting service that provides easy-to-remember domains for your services, with built-in protections.
 
 ## Features
 
 - **Free Subdomain Registration** - Get your own `*.freedomain.meme` subdomain
 - **Automatic Bad Word Detection** - AI-powered filtering prevents inappropriate domain names
 - **Content Moderation** - Automated web scraping checks for harmful content
-- **Two-Factor Authentication** - Secure OTP-based 2FA for all accounts
+- **Two-Factor Authentication** - Secure OTP-based 2FA for all accounts required
 - **Discord Integration** - Real-time logging and admin commands via Discord bot
-- **IP-Based Authentication** - Enhanced security with IP verification
 - **One Domain Per User** - Fair usage policy with one subdomain per IP address
 
 ## Tech Stack
 
-- **Backend**: Flask (Python)
-- **Database**: SQLite with WAL mode
+- **Backend**: Flask (Python) Why: Why Not? Simple and Easy! + cool and many Libaries 
+- **Database**: SQLite 
 - **DNS Provider**: Namecheap API
 - **Authentication**: pyotp (TOTP), SHA-256 password hashing
 - **Content Analysis**: profanity-check, NLTK
 - **Web Scraping**: BeautifulSoup4, urllib3
 - **Bot**: Discord.py
-- **Rate Limiting**: Flask-Limiter
 
 ## Installation
 
@@ -42,7 +40,7 @@ cd FreeDomain
 2. Create a virtual environment and install dependencies:
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install flask python-dotenv pyotp qrcode discord.py flask-limiter
 pip install profanity-check beautifulsoup4 urllib3 fake-useragent nltk
 pip install namecheap-sdk
@@ -93,7 +91,7 @@ The Flask app runs on `http://localhost:5000` by default.
 
 ### Discord Bot Commands
 
-Admin commands (requires hardcoded admin Discord ID):
+Admin commands (requires hardcoded admin Discord ID - In code editable):
 
 - `$test <arg>` - Test bot responsiveness
 - `$ban <userid> <reason>` - Ban user and remove their domain
@@ -110,16 +108,15 @@ Admin commands (requires hardcoded admin Discord ID):
 - **users** - User accounts with password hashes and IP addresses
 - **user_2fa** - TOTP secrets for two-factor authentication
 - **subdomains** - Subdomain mappings to target IPs
-- **session** - Active user sessions with 30-minute timeout
+- **session** - Active user sessions with 30-minute timeout etc
 
 ### Security Features
 
 1. **Password Generation** - Server-generated 64-character passwords
-2. **IP Verification** - Login restricted to registration IP
-3. **Session Management** - HttpOnly, Secure, SameSite cookies
-4. **Rate Limiting** - 25 requests per hour on sensitive endpoints
-5. **TOTP 2FA** - Time-based one-time passwords
-6. **Content Filtering** - Automated profanity and harmful content detection
+2. **Session Management** - HttpOnly, Secure, SameSite cookies
+3. **Rate Limiting** - 25 requests per hour on sensitive endpoints
+4. **TOTP 2FA** - Time-based one-time passwords
+5. **Content Filtering** - Automated profanity and harmful content detection
 
 ### Content Moderation
 
@@ -128,7 +125,7 @@ The system runs automated checks every 6 hours:
 1. Scrapes up to 100 pages per subdomain
 2. Extracts and analyzes text content
 3. Runs profanity detection on extracted words
-4. Automatically bans domains exceeding 50% harmful content threshold
+4. Automatically bans domains when the chance of a bad word is greater than 50%
 5. Sends Discord notifications for manual review
 
 ## Project Structure
@@ -138,10 +135,10 @@ FreeDomain/
 ├── main.py              # Flask app, Discord bot, main logic
 ├── scraper.py           # Web crawler for content analysis
 ├── web_target.py        # URL normalization and DNS helpers
-├── templates/           # HTML templates (not modified per request)
+├── templates/           # HTML templates
 ├── static/              # Static assets and QR codes
 ├── app.db               # SQLite database
-├── .env                 # Environment variables (not in git)
+├── .env                 # Environment variables (not in git - obviously)
 └── README.md            # This file
 ```
 
@@ -184,7 +181,6 @@ Configured in line 50-55. Default: 200/day, 50/hour globally.
 - 30-minute session timeout
 - Subdomain names cannot contain "freedomain.meme" or "www"
 - Only A and AAAA DNS records supported
-- Manual verification required for all new subdomains (check Discord logs)
 
 ## Contributing
 
@@ -205,4 +201,4 @@ Well, does it need to look good? It works, and that's the main thing it needs to
 
 ---
 
-Made with ~~bugs~~ love ❤️
+Made with ~~bugs~~ love ❤️  (and a bit of Bugs)
