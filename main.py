@@ -234,6 +234,28 @@ def init_db(): #Initialises the db
     conn.close()
     with get_conn() as conn:
         conn.executescript(DB_SCHEMA)
+
+        # Migration: Rename 'target' column to 'ip' if it exists
+        try:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(subdomains)").fetchall()]
+            if 'target' in columns and 'ip' not in columns:
+                # SQLite doesn't support RENAME COLUMN in older versions, so we recreate the table
+                conn.execute("""
+                    CREATE TABLE subdomains_new(
+                        id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                        subdomain      TEXT NOT NULL DEFAULT '-1',
+                        updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ip             TEXT
+                    )
+                """)
+                conn.execute("INSERT INTO subdomains_new (id, subdomain, updated_at, ip) SELECT id, subdomain, updated_at, target FROM subdomains")
+                conn.execute("DROP TABLE subdomains")
+                conn.execute("ALTER TABLE subdomains_new RENAME TO subdomains")
+                conn.commit()
+                send_log("Migrated subdomains table: 'target' -> 'ip'", 4)
+        except Exception as e:
+            send_log(f"Migration check failed (probably fresh DB): {e}", 3)
+
         send_log("Initialised the DB!", 4)
         
 
@@ -277,14 +299,14 @@ def MakeNewUser(ipadress: str) -> str:
             conn.commit()
 
             userid = conn.execute("SELECT id FROM users WHERE hash_secret = ?", (hash_pw,)).fetchone()
-            send_log(f"{userid['id']} Registerd from {ipadress} at {time.time()}!", 4)
+            send_log(f"{userid['id']} Registerd at {time.time()}!", 4)
         return password
     except sqlite3.Error as e: # if an error happens at the writing
         if "UNIQUE constraint failed" in str(e): # and it has that string in the error message
-            send_log(f"An user tried to register from {ipadress} but there was already an user at that IP adress!", 1)
+            send_log(f"An user tried to register but there was already an user at that IP adress!", 1)
             return -1 # The user has already registerd from that ip
         else:
-            send_log(f"An user tried to register from {ipadress} and something failed!", 2)
+            send_log(f"An user tried to register  and something failed!", 2)
             return -2 # Else something different happend
 
 
@@ -304,7 +326,7 @@ def VerifyUser(password: str, ip_addr: str) -> bool: # Also used to get the user
             return -1
         
         if row['ip_address'] != ip_addr:
-            send_log(f"User {row['id']} Logged in from {ip_addr}, but Originates from {row['ip_address']}", 4)
+            send_log(f"User {row['id']} Logged in from a different IP!", 1)
 
         if row['is_restricted'] is None or row['id'] is None: #if not, then deny acsess
             return -1
@@ -602,12 +624,16 @@ async def getInfo(ctx, uid): # get Info about a specific user
 
 @bot.event
 async def on_command_error(ctx, error): # sends errors from the dc bot to a dc channel. Wait. That... sounds strange??
+    # Ignore CommandNotFound errors - those are just typos/invalid commands
+    if isinstance(error, commands.CommandNotFound):
+        return
+
     original = getattr(error, "original", error)
-    
+
     print(f"[BOT ERROR] Command '{ctx.command}' failed: {original!r}")
-    
+
     traceback.print_exception(type(original), original, original.__traceback__)
-    
+
     send_log(f"Error in command `{ctx.command}`: `{original}`", 2)
 
 
