@@ -235,27 +235,6 @@ def init_db(): #Initialises the db
     with get_conn() as conn:
         conn.executescript(DB_SCHEMA)
 
-        # Migration: Rename 'target' column to 'ip' if it exists
-        try:
-            columns = [row[1] for row in conn.execute("PRAGMA table_info(subdomains)").fetchall()]
-            if 'target' in columns and 'ip' not in columns:
-                # SQLite doesn't support RENAME COLUMN in older versions, so we recreate the table
-                conn.execute("""
-                    CREATE TABLE subdomains_new(
-                        id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-                        subdomain      TEXT NOT NULL DEFAULT '-1',
-                        updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ip             TEXT
-                    )
-                """)
-                conn.execute("INSERT INTO subdomains_new (id, subdomain, updated_at, ip) SELECT id, subdomain, updated_at, target FROM subdomains")
-                conn.execute("DROP TABLE subdomains")
-                conn.execute("ALTER TABLE subdomains_new RENAME TO subdomains")
-                conn.commit()
-                send_log("Migrated subdomains table: 'target' -> 'ip'", 4)
-        except Exception as e:
-            send_log(f"Migration check failed (probably fresh DB): {e}", 3)
-
         send_log("Initialised the DB!", 4)
         
 
