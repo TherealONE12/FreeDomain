@@ -375,7 +375,7 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
             subdomain_state = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (id,)).fetchone() # current subdomain
         
         if subdomain_state is None or str(subdomain_state['subdomain']) == "-1": # dont waste power computing stuff, if the user doesnt have the rights to create a new subdomain
-            dns_existing = nc.domains_dns_getHosts("freedomain", "meme")
+            dns_existing = nc.domains_dns_getHosts("freedomain.meme")
             dns_subdomain_names = set(
                 record.get('Name')
                 for record in dns_existing
