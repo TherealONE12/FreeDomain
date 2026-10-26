@@ -1,7 +1,5 @@
 from flask import render_template, request, Flask, make_response, abort
 from profanity_check import predict, predict_prob
-from namecheap.models import DNSRecord
-from namecheap import Namecheap
 from namecheap import Api
 from dotenv import load_dotenv
 from discord.ext import commands, tasks
@@ -32,6 +30,11 @@ import ipaddress, re
 
 # Setup stuff
 load_dotenv()
+NAMECHEAP_USERNAME = os.getenv("NAMECHEAP_USERNAME")
+NAMECHEAP_API_KEY = os.getenv("NAMECHEAP_API_KEY")
+CLIENT_IP = os.getenv("CLIENT_IP")
+NAMECHEAP_SANDBOX = os.getenv("NAMECHEAP_SANDBOX", "False").lower() == "true"
+
 nc = Api(ApiUser=NAMECHEAP_USERNAME,
     ApiKey=NAMECHEAP_API_KEY,
     UserName=NAMECHEAP_USERNAME,
