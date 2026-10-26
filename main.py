@@ -220,6 +220,11 @@ def send_ban(userid: int, domainname: str, ip:str, reason:str): # Notifies of Ba
 
 
 # All website helper funktions are below. 
+def set_hosts(records):
+    fixed = [nc._elements_names_fix(r) for r in records]
+    nc.domains_dns_setHosts("freedomain.meme", fixed)
+
+
 @contextmanager # Allows to hop back to here to conn.close on OK using yield conn 
 def get_conn(): # gets an databank connection going 
     conn = sqlite3.connect(DB_PATH, timeout=30)# Also wait a maximum of 30s for an active connection instead of crashing.
@@ -410,7 +415,7 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                     }
                     existing_records = nc.domains_dns_getHosts("freedomain.meme")
                     existing_records.append(record)
-                    nc.domains_dns_setHosts("freedomain.meme", existing_records)
+                    set_hosts(existing_records)
                     send_log(f"Manual Verify needed for {subdomainname} ({dns_value})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
@@ -429,7 +434,7 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
                    }
                     existing_records = nc.domains_dns_getHosts("freedomain.meme")
                     existing_records.append(record)
-                    nc.domains_dns_setHosts("freedomain.meme", existing_records)
+                    set_hosts(existing_records)
 
                     send_log(f"Manual Verify needed for {newdomain} ({dns_value})", 3)
 
@@ -464,9 +469,9 @@ def removeDomainUser(userid:int): # removes The domain from an User
         existing_records = nc.domains_dns_getHosts("freedomain.meme")
         filtered_records = [
             r for r in existing_records
-            if not (r.get('Name') == subdomainname and r.get('Type') == 'A' and r.get('Adress') == ip)
+            if not (r.get('Name') == subdomainname and r.get('Type') == 'A' and r.get('Address') == ip)
         ]
-        nc.domains_dns_setHosts("freedomain.meme", filtered_records)
+        set_hosts(filtered_records)
 
         conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid)) # updates the db
         conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
@@ -514,8 +519,7 @@ def IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite():
                             r for r in existing_records
                             if not (r.get('Name') == cur_scrape_url['subdomain'] and r.get('Type')== 'A' and r.get('Address') == ip)
                         ]
-                        nc.domains_dns_setHosts("freedomain.meme", filtered_records)
-
+                        set_hosts(filtered_records)
 
 def scrape_loop():
     while True:
@@ -775,7 +779,7 @@ def otp_input():
                     else:
                         subdomainname = subdomainname['subdomain']
 
-                        dns_existing = nc.domains_dns_getHosts
+                        dns_existing = nc.domains_dns_getHosts("freedomain.meme")
                         record = next((r for r in dns_existing if r.get('Name') == subdomainname and r.get('Type') == 'A'), None)
                         ip = record.get('Address') if record else None
 
