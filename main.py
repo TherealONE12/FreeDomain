@@ -2,6 +2,7 @@ from flask import render_template, request, Flask, make_response, abort
 from profanity_check import predict, predict_prob
 from namecheap.models import DNSRecord
 from namecheap import Namecheap
+from namecheap import Api
 from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from bs4 import BeautifulSoup
@@ -31,7 +32,11 @@ import ipaddress, re
 
 # Setup stuff
 load_dotenv()
-nc = Namecheap()
+nc = Api(ApiUser=NAMECHEAP_USERNAME,
+    ApiKey=NAMECHEAP_API_KEY,
+    UserName=NAMECHEAP_USERNAME,
+    ClientIP=CLIENT_IP,
+    sandbox=NAMECHEAP_SANDBOX)
 try:
     domains = nc.domains.check("freedomain.meme")
     for domain in domains:
@@ -255,8 +260,9 @@ def setup_otp(userid: int):
     qrcode.make(totp_auth).save(f"static/qr/{userid}/qr_auth.png") # generates an qr code for the user to easily scan with an mobile
     
     with get_conn() as conn:
-        conn.execute("INSERT INTO user_2fa (id, totp_secret) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET totp_secret = excluded.totp_secret",(userid, key))
-        conn.commit()  # LINE ABOVE: Writes the secret key into the db for that specific userid CURRENT LINE: Commits it to the db
+        conn.execute("INSERT INTO user_2fa (id, totp_secret) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET totp_secret = excluded.totp_secret", (userid, key))
+        # LINE ABOVE: Writes the secret key into the db for that specific userid CURRENT LINE: Commits it to the db
+        conn.commit()
     send_log(f"{userid} Registerd OTP!", 4)
     return 1 # Return 1 on Sucsess. And prays that there are no errors causethey are currently not handled. Whoops
 
@@ -369,26 +375,46 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
             subdomain_state = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (id,)).fetchone() # current subdomain
         
         if subdomain_state is None or str(subdomain_state['subdomain']) == "-1": # dont waste power computing stuff, if the user doesnt have the rights to create a new subdomain
-            dns_existing = nc.dns.get("freedomain.meme")
-            subdomain_other = [DNSRecord for DNSRecord in dns_existing if DNSRecord.type == 'A']
+            dns_existing = nc.domains_dns_getHosts("freedomain", "meme")
+            dns_subdomain_names = set(
+                record.get('Name')
+                for record in dns_existing
+                if record.get('Type') == 'A' and record.get('Name')
+            )
 
-            append = 0 
-            curcnt = 0
-            for record in subdomain_other:# going through all rows
-                for record_fr in subdomain_other:# checing for duplicates way to many times
-                    if (record_fr.name == subdomainname and curcnt == 0) or record_fr.name == f"{curcnt}.{subdomainname}":
-                        append +=1
-                curcnt += 1
+            all_exsisting_subdomains = dns_subdomain_names
+
+            with get_conn() as conn:
+                db_subdomain = conn.execute(
+                    "SELECT subdomain FROM subdomains WHERE subdomain != '-1'"
+                ).fetchall()
+
+                db_subdomain_names = set(row['subdomain'] for row in db_subdomain if row['subdomain'])
+
+                all_exsisting_subdomains = db_subdomain_names | dns_subdomain_names
+            
+            append = 0
+            base_name = subdomainname
+
+            if base_name in all_exsisting_subdomains:
+                append = 1
+                while f"{append}.{base_name}" in all_exsisting_subdomains:
+                    append += 1
 
             if append == 0: # if no appending is required
                 if subdomain_state is None or str(subdomain_state['subdomain']) == "-1": # if no subdomain got set
-                    record = DNSRecord(name=subdomainname, type=record_type, value=dns_value, ttl=1799) # make the record
-                    nc.dns.add("freedomain.meme",record) # and write it to the namecheap servers
-
+                    record = {'Name':subdomainname,
+                    'Type':record_type,
+                    'Address':dns_value,
+                    'TTL':'1799'
+                    }
+                    existing_records = nc.domains_dns_getHosts("freedomain.meme")
+                    existing_records.append(record)
+                    nc.domains_dns_setHosts("freedomain.meme", existing_records)
                     send_log(f"Manual Verify needed for {subdomainname} ({dns_value})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
-                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain, ip = excluded.ip", (id,subdomainname,dns_value)).fetchone() # current subdomain
+                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain, ip = excluded.ip", (id,subdomainname,dns_value))
                     send_log(f"User {id} made an Domain named {subdomainname}.freedomain.meme at {time.time()} with link to {ip}!", 1)
                     return 0 # all good
                 else:
@@ -396,13 +422,19 @@ def make_domain(id: int, subdomainname: str, ip: int, session: str): # makes a d
             else:
                 newdomain = f"{append}.{subdomainname}" # appending the prefix
                 if subdomain_state is None or str(subdomain_state['subdomain']) == "-1":
-                    record = DNSRecord(name=newdomain, type="A", value=dns_value, ttl=1799) # make the record and ship it to the servers. same as above
-                    nc.dns.add("freedomain.meme",record)
+                    record = {'Name':newdomain,
+                    'Type':record_type,
+                    'Address':dns_value,
+                    'TTL':'1799'
+                   }
+                    existing_records = nc.domains_dns_getHosts("freedomain.meme")
+                    existing_records.append(record)
+                    nc.domains_dns_setHosts("freedomain.meme", existing_records)
 
                     send_log(f"Manual Verify needed for {newdomain} ({dns_value})", 3)
 
                     with get_conn() as conn: # write the new cool domain into the db
-                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain", (id,newdomain,dns_value)).fetchone() # current subdomain
+                        conn.execute("INSERT INTO subdomains (id, subdomain, ip) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET subdomain = excluded.subdomain, ip = excluded.ip", (id,newdomain,dns_value))
                     send_log(f"User {id} made an Domain named {newdomain}.freedomain.meme at {time.time()} with link to {dns_value}!", 1)
                     return append # different return to let the user know
                 else:
@@ -429,8 +461,12 @@ def removeDomainUser(userid:int): # removes The domain from an User
 
         ip = ip['ip'] # gets the name
 
-    
-        nc.dns.delete(domain="freedomain.meme", name=subdomainname, record_type="A", value=ip) # delets his stuff
+        existing_records = nc.domains_dns_getHosts("freedomain.meme")
+        filtered_records = [
+            r for r in existing_records
+            if not (r.get('Name') == subdomainname and r.get('Type') == 'A' and r.get('Adress') == ip)
+        ]
+        nc.domains_dns_setHosts("freedomain.meme", filtered_records)
 
         conn.execute("UPDATE subdomains SET subdomain = ? WHERE id = ?", (-1, userid)) # updates the db
         conn.execute("UPDATE subdomains SET updated_at = ? WHERE id = ?", (time.time(), userid))
@@ -467,13 +503,19 @@ def IHopeIdontCrashPlsJustWorkStupidVerifyForwebsite():
 
                         id = idrow['id']
 
-                        dns_existing = nc.dns.get("freedomain.meme") # gets the existing stuff
-                        record = next(r for r in dns_existing if r.name == cur_scrape_url['subdomain'] and r.type == "A") # and extracts his details
-                        ip = record.value if record else None # gets his ip
+                        dns_existing = nc.domains_dns_getHosts("freedomain.meme") # gets the existing stuff
+                        record = next((r for r in dns_existing if r.get('Name') == cur_scrape_url['subdomain'] and r.get('Type') == 'A'), None) # and extracts his details
+                        ip = record.get('Address') if record else None
 
                         conn.execute("UPDATE users SET is_restricted = 1 WHERE id = ?", (id,)) # and bans him
+                        
+                        existing_records = nc.domains_dns_getHosts("freedomain.meme")
+                        filtered_records = [
+                            r for r in existing_records
+                            if not (r.get('Name') == cur_scrape_url['subdomain'] and r.get('Type')== 'A' and r.get('Address') == ip)
+                        ]
+                        nc.domains_dns_setHosts("freedomain.meme", filtered_records)
 
-                        nc.dns.delete(name=cur_scrape_url['subdomain'], domain="freedomain.meme", record_type="A", value=ip) # also deletes the domain
 
 def scrape_loop():
     while True:
@@ -720,7 +762,8 @@ def otp_input():
                 session_id = secrets.token_urlsafe(96)
 
                 with get_conn() as conn:
-                    conn.execute("INSERT INTO session (id, session_key, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET session_key = excluded.session_key, updated_at = excluded.updated_at",(userid, session_id, time.time()))
+                    conn.execute("INSERT INTO session (id, session_key, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET session_key = excluded.session_key, updated_at = excluded.updated_at", (userid, session_id, time.time()))
+                    
                     #LINE ABOVE: insert into the session the userid and session key, if the userid already exists (wich it does) it updates the session field instead of crashing
 
                     subdomainname = conn.execute("SELECT subdomain FROM subdomains WHERE id = ?", (userid,)).fetchone()
@@ -732,9 +775,9 @@ def otp_input():
                     else:
                         subdomainname = subdomainname['subdomain']
 
-                        dns_existing = nc.dns.get("freedomain.meme")
-                        record = next((r for r in dns_existing if r.name == subdomainname and r.type == "A"), None)
-                        ip = record.value if record else None
+                        dns_existing = nc.domains_dns_getHosts
+                        record = next((r for r in dns_existing if r.get('Name') == subdomainname and r.get('Type') == 'A'), None)
+                        ip = record.get('Address') if record else None
 
                         resp = make_response(render_template('home_loggedin.html', has_subdomain=1, subdomainname=subdomainname, ip=ip))
                     resp.set_cookie(
