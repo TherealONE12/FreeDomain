@@ -928,6 +928,11 @@ def homepagev2():
 def support():
     return render_template("support.html")
 
+@app.route('/tester.html', methods=['GET', 'POST'])
+@app.route('/tester', methods=['GET', 'POST'])
+def support():
+    return render_template("tester.html")
+
 @app.errorhandler(404) 
 def handle_404(e):
     return "Not Found", 404
