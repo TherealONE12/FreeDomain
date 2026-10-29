@@ -28,6 +28,12 @@ A free Subdomain hosting service.
 
 # Flow to use/test (Important):
 
+## If you do not know for what this site is:
+
+Please goto https://freedomain.meme/tester.html
+
+## If you know what you are doing:
+
 1. Register your account
 
 2. Note your Password. If you go back, it is gone.
