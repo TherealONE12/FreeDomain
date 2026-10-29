@@ -930,7 +930,7 @@ def support():
 
 @app.route('/tester.html', methods=['GET', 'POST'])
 @app.route('/tester', methods=['GET', 'POST'])
-def support():
+def tester():
     return render_template("tester.html")
 
 @app.errorhandler(404) 
